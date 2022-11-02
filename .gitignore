@@ -127,3 +127,22 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+
+# sbt specificf
+.cache/
+.history/
+.lib/
+dist/*
+lib_managed/
+src_managed/
+project/boot/
+project/plugins/project/
+
+#idea specific
+.idea
+.idea/*
+data/output/*
+*.whl
+Footer
+.fleet

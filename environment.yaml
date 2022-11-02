@@ -1,0 +1,22 @@
+name: genotations
+channels:
+    - conda-forge
+    - BjornFJohansson
+    - bioconda
+    - defaults
+dependencies:
+    - python=3.10
+    - jupyterlab
+    - dnacauldron
+    - click
+    - pybedtools
+    - ucsc-gtftogenepred
+    - ucsc-genepredtobed
+    - pip
+    - primer3-py
+    - primer3
+    - pip:
+        - pycomfort
+        - polars
+        - genomepy
+        - dna_features_viewer
