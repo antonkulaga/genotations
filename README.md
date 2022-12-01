@@ -18,7 +18,7 @@ The library allows:
 * visualizing the genes features
 * designing primers for selected transcripts with Primer3 python wrapper
 
-Please, check [example notebook](https://github.com/antonkulaga/genotations/blob/main/examples/explore_mosue.ipynb) to see the usage and API
+Please, check [example notebook](https://github.com/antonkulaga/genotations/blob/main/examples/explore_mouse.ipynb) to see the usage and API
 
 
 Working with code
