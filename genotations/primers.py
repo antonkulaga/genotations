@@ -1,6 +1,8 @@
 import re
 from enum import Enum
 
+import Bio
+from Bio import Seq
 import pyfaidx
 from primer3 import bindings
 import random
@@ -12,6 +14,7 @@ from dataclasses import dataclass
 from genotations.genomes import random_color
 
 from genotations.genomes import TranscriptIntersection
+
 
 
 class PrimersMode(Enum):
@@ -59,6 +62,15 @@ class PrimerResult:
 
     def get_sequences(self):
         return (self.PRIMER_LEFT_SEQUENCE, self.PRIMER_RIGHT_SEQUENCE)
+
+    def counts(self, sequence: Bio.Seq.Seq) -> tuple[int, int]:
+        rev = sequence.reverse_complement()
+        return sequence.count_overlap(self.PRIMER_LEFT_SEQUENCE) + rev.count_overlap(self.PRIMER_LEFT_SEQUENCE), \
+               rev.count_overlap(self.PRIMER_RIGHT_SEQUENCE) + sequence.count_overlap(self.PRIMER_RIGHT_SEQUENCE)
+
+    def has_repeats(self, sequence: Bio.Seq.Seq) -> bool:
+        (f, r) = self.counts(sequence)
+        return f + r > 2
 
     def get_temperatures(self):
         return self.PRIMER_LEFT_TM, self.PRIMER_RIGHT_TM
@@ -141,6 +153,10 @@ class PrimerResult:
 
 class PrimerResults:
 
+    results: list[PrimerResult]
+    primer_left_explain: str
+    primer_right_explain: str
+
     @staticmethod
     def empty() -> 'PrimerResults':
         return PrimerResults({})
@@ -162,6 +178,11 @@ class PrimerResults:
                             only_half_gc_in_last_four: bool = False):
         return [r for r in self.results if r.filter(max_repeated_gc, max_temperature_difference, not_start_with_g, one_two_three_gc_in_last_four, only_half_gc_in_last_four)]
 
+    def not_repeated_in(self, bio: Bio.Seq):
+        new_results = seq(self.results).filter(lambda r: not r.has_repeats(bio)).to_list()
+        result = copy(self)
+        result.results = new_results
+        return result
 
 def suggest_primers(dna: str, opt_t: float = 60.0,
                     min_t: float = 57.0,  max_t: float = 62.0,
@@ -210,11 +231,12 @@ def suggest_primers(dna: str, opt_t: float = 60.0,
         out of which {len(result.get_cleaned_results(only_half_gc_in_last_four=True))} should also have half gc
         """)
     return PrimerResults(result_dict)
+
 def suggest_interval_primers(s: pyfaidx.Sequence,
-                     a: TranscriptIntersection, b: TranscriptIntersection,
-                     opt_t: float = 60.0,
-                     min_t: float = 59.9,
-                     max_t: float = 65.0) -> PrimerResults:
+                             a: TranscriptIntersection, b: TranscriptIntersection,
+                             opt_t: float = 60.0,
+                             min_t: float = 59.9,
+                             max_t: float = 65.0) -> PrimerResults:
     a_left = a.start - s.start
     a_len = a.end - a.start
     b_left = b.start - s.start
@@ -223,40 +245,3 @@ def suggest_interval_primers(s: pyfaidx.Sequence,
     return suggest_primers(str(s.seq),
                            primers_pair_ok=primers_pair_ok,
                            opt_t=opt_t, min_t=min_t, max_t=max_t, min_product=100, max_product=500)
-
-def location_to_feature(name: str, start: int, end: int, strand: int = +1) -> GraphicFeature:
-    color = random_color()
-    return GraphicFeature(start=start,
-                          end=end,
-                          strand=strand,
-                          color=color,
-                          label=f"{name}"
-                          )
-
-def primer_to_feature(name: str, primer_result: PrimerResult, left_right: bool = False, amplified: bool = True, strand: int = +1, shift: int = 0) -> list[GraphicFeature]:
-    color = random_color()
-    left = GraphicFeature(start=primer_result.PRIMER_LEFT[0]+shift,
-                          end=primer_result.PRIMER_LEFT[0]+primer_result.PRIMER_LEFT[1]+shift,
-                          strand=strand,
-                          color=color,
-                          label=f"L_P_{name}"
-                          )
-    right = GraphicFeature(start=primer_result.PRIMER_RIGHT[0]+shift,
-                           end=primer_result.PRIMER_RIGHT[0]+primer_result.PRIMER_RIGHT[1]+shift,
-                           strand=strand,
-                           color=color,
-                           label=f"R_P_{name}"
-                           )
-    amplified_feature = GraphicFeature(start=primer_result.PRIMER_LEFT[0]+shift,
-                                       end=primer_result.PRIMER_RIGHT[0]+primer_result.PRIMER_RIGHT[1]+shift,
-                                       strand=strand,
-                                       color=color,
-                                       label=f"amplified_by_primer_{name}"
-                                       )
-    if left_right:
-        if amplified:
-            return [left, right, amplified_feature]
-        else:
-            return [left, right]
-    else:
-        return [amplified_feature] if amplified else []

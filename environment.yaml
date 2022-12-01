@@ -7,16 +7,13 @@ channels:
 dependencies:
     - python=3.10
     - jupyterlab
-    - dnacauldron
     - click
-    - pybedtools
-    - ucsc-gtftogenepred
-    - ucsc-genepredtobed
-    - pip
     - primer3-py
-    - primer3
+    - twine
+    - dna_features_viewer
+    - pyarrow
+    - pip
     - pip:
         - pycomfort
         - polars
         - genomepy
-        - dna_features_viewer
