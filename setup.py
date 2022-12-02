@@ -7,7 +7,7 @@ here = os.path.abspath(os.path.dirname(__file__))
 with codecs.open(os.path.join(here, "README.md"), encoding="utf-8") as fh:
     long_description = "\n" + fh.read()
 
-VERSION = '0.0.3'
+VERSION = '0.0.4'
 DESCRIPTION = 'Genotations - python library to work with genomes and primers'
 LONG_DESCRIPTION = 'Genotations - python library to work with genomes and primers'
 
@@ -21,7 +21,7 @@ setup(
     long_description_content_type="text/markdown",
     long_description=long_description,
     packages=find_packages(),
-    install_requires=['pyfunctional', 'more-itertools', 'click', 'pycomfort', 'polars', 'genomepy', 'primer3-py', "dna_features_viewer", "pyarrow", "genomepy"],
+    install_requires=['pyfunctional', 'more-itertools', 'click', 'pycomfort', 'polars', 'genomepy', 'primer3-py', "dna_features_viewer", "pyarrow"],
     keywords=['python', 'utils', 'files'],
     classifiers=[
         "Development Status :: 2 - Pre-Alpha",

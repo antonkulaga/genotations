@@ -12,6 +12,7 @@ dependencies:
     - twine
     - dna_features_viewer
     - pyarrow
+    - biopython==1.7.9 #temporary, as there is a bug in dna feature viewer
     - pip
     - pip:
         - pycomfort
