@@ -11,7 +11,7 @@ import random
 from functools import cached_property
 
 
-ensembl = genomepy.providers.EnsemblProvider()
+ensembl = genomepy.providers.EnsemblProvider() #instance of ensembl provider to be used for further genome and annotations downloads
 
 def _get_sequence_from_series(series:pl.Series, genome: Genome, rc: bool) -> str:
     #print("SERIES IS: ", series)
@@ -46,23 +46,33 @@ class TranscriptBioType(Enum):
 class Annotations:
     """
     GTF annotations class,
-    core class to work with GTF annotations in a chained way with polars
+    core class to work with GTF annotations in a chained way with polars.
+    A widespread usage is calling chained methods and then getting resulting polars annotation_df dataframe
     """
 
+    #declaration for the main polars dataframe in the class
     annotations_df: pl.DataFrame
+
+    #this column expression is used in the functions that extract sequences. It just get's the fields important for sequence extraciton in one column
     coordinate_column: pl.Expr = pl.concat_list([pl.col("seqname"), pl.col("start"), pl.col("end")]).alias("sequence")
 
     def __init__(self, gtf: Union[Path, str, pl.DataFrame]):
+        """
+        Major class constructor
+        :param gtf: Path to GTF file as string or Path or polars Dataframe
+        """
         if isinstance(gtf, Path) or type(gtf) is str:
+            # if it is a path then load and clean it
             self.annotations_df = self.read_GTF(gtf)
         else:
+            # if we already have the dataframe (for example in chained calls) than just assign it
             self.annotations_df = gtf
 
 
     def read_GTF(self, path: Union[str, Path]) -> pl.DataFrame:
         """
         Reads GTF file with feature annotations.
-        It does some pre-processing as well
+        It also does preprocessing of it as often in GTF multiple values are mixed in one cell
         :param path: path to the file
         :return: polards datafra
         """
@@ -76,6 +86,7 @@ class Annotations:
                                  "strand": pl.Categorical
                              }
                              )
+        # does some preprocessing, mostly extracting attributes (which are multiple per cell in GTF files) to separate columns with regular expressions
         result = loaded \
                  .with_column(att.str.extract("gene_id \"[a-zA-Z0-9_.-]*", 0).str.replace("gene_id \"", "").alias("gene")) \
                  .with_column(att.str.extract("gene_name \"[a-zA-Z0-9_.-]*", 0).str.replace("gene_name \"", "").alias("gene_name")) \
@@ -89,7 +100,7 @@ class Annotations:
     @cached_property
     def annotations_pandas(self) -> pandas.DataFrame:
         """
-        For strange people who prefer reading reasults as pandas instead of polars
+        For strange people who prefer reading results as pandas instead of polars
         :return:
         """
         return self.annotations_df.to_pandas()
@@ -167,6 +178,10 @@ class Annotations:
 
 
     def genes(self) -> 'Annotations':
+        """
+        Gets only genes features
+        :return:
+        """
         return self.feature(FeatureType.GENE)
 
     @cached_property
@@ -181,23 +196,36 @@ class Annotations:
     def transcript_gene_names_df(self) -> pl.DataFrame:
         """
         Getting just  Ensembl Transcript id -> Transcript name and Ensembl gene id -> gene name correspondence is a common task as we often want to join such dataframe with others
-        :return: NOTE: returens dataframe and not self
+        :return: NOTE: returns dataframe and not self, _df suffix means dataframe
         """
         return self.annotations_df\
             .select([pl.col("transcript"), pl.col("transcript_name"), pl.col("gene"), pl.col("gene_name")])\
             .filter(pl.col("transcript").is_not_null())
 
+    def get_transcript_ids(self) -> pl.Series:
+        """
+        :return: a series with all transcript ids in the annotations
+        """
+        return self.annotations_df.select(pl.col("transcript_id")).to_series()
 
-    def exon_features_by_gene_name(self, gene_name):
+    def get_transcript_names(self) -> pl.Series:
+        """
+        :return: a series with all transcript ids in the annotations
+        """
+        return self.annotations_df.select(pl.col("transcript_name").unique()).to_series()
+
+
+    def exon_features_by_gene_name(self, gene_name: str):
         """
         Visualizing exon gene features, uses dna_feature_viewer library for drawing
         :param gene_name:
         :return:
         """
         from dna_features_viewer import GraphicFeature
-        selection = [pl.col("transcript_name"), pl.col("exon_number"),pl.col("start"), pl.col("end")]
+        selection = [pl.col("transcript_name"), pl.col("exon_number"), pl.col("start"), pl.col("end")] # make a list of columns to select
         anno = self.with_gene_name_contains(gene_name).protein_coding().exons().annotations_df.select(selection).unique()
-        return seq(anno.with_column((pl.col("transcript_name")+pl.lit("_")+pl.col("exon_number")).alias("transcript_exon")).select(
+        transcript_exon = (pl.col("transcript_name")+pl.lit("_")+pl.col("exon_number")).alias("transcript_exon") #creates a column for exon names
+        return seq(anno.with_column(transcript_exon).select(
             ["transcript_exon", "start", "end"]).rows()) \
                 .map(lambda t:  GraphicFeature(
                 start = t[1],
@@ -209,14 +237,15 @@ class Annotations:
             ) \
             .to_list()
 
-    def transcript_features_by_gene_name(self, gene_name, rc):
+    def transcript_features_by_gene_name(self, gene_name, rc) -> list:
         """
         Visualizing exon gene features, uses dna_feature_viewer library for drawing
         :param gene_name: part of the gene name of interest
-        :return:
+        :return: list of graphical features that then can be rendered to plots
         """
         from dna_features_viewer import GraphicFeature
-        return seq(self.with_gene_name_contains(gene_name).transcripts().annotations_df.select(
+        transcripts_for_gene = self.with_gene_name_contains(gene_name).transcripts()
+        return seq(transcripts_for_gene.annotations_df.select(
             ["transcript_name", "start", "end"]).rows()) \
                 .map(lambda t:  GraphicFeature(
                     start =t[1] if not rc else t[2],
@@ -230,13 +259,13 @@ class Annotations:
             )\
             .to_list()
 
-    def gene_to_graphical_record(self, gene_name: str, start: int, end: int,
+    def _gene_to_graphical_record(self, gene_name: str, start: int, end: int,
                                  sequence: str, exons: bool = True,
                                  transcript_intersections: list['TranscriptIntersection'] = None,
                                  other_features: list = None, rc: bool = False
                                  ):
         """
-        Visualizes gene features
+        Writes a graphical record from the gene with additional parameters, is considered protected function
         :param gene_name: part of the gene name of interest
         :param start:
         :param end:
@@ -245,7 +274,7 @@ class Annotations:
         :param transcript_intersections:
         :param other_features:
         :param rc:
-        :return:
+        :return: GraphicalRecord that then can be rendered as plot by calling plot() method
         """
         strand = -1 if rc else 1
         from dna_features_viewer import GraphicRecord, GraphicFeature
@@ -262,9 +291,9 @@ class Annotations:
                      other_features: list = None):
         """
         visualizes genes with dna_feature_viewer
-        :param genome:
-        :param rc:
-        :param exons:
+        :param genome: genomepy genome that will be used to extract sequences
+        :param rc: if the sequence should be reverse-complement
+        :param exons: if we include exons in the render
         :param transcript_intersections:
         :param other_features:
         :return:
@@ -272,19 +301,13 @@ class Annotations:
         annotation_with_sequence = self.genes().with_sequences(genome, rc).annotations_df
         return seq(
                 annotation_with_sequence.select(["gene_name", "start", "end", "sequence"]).rows()
-            ).map(lambda r: self.gene_to_graphical_record(
+            ).map(lambda r: self._gene_to_graphical_record(
                 r[0], r[1], r[2], r[3],
                 exons=exons,
                 transcript_intersections=transcript_intersections,
                 other_features=other_features, rc=rc
                 )
             ).to_list()
-
-    def get_transcript_ids(self) -> pl.Series:
-        return self.annotations_df.select(pl.col("transcript_id")).to_series()
-
-    def get_transcript_names(self) -> pl.Series:
-        return self.annotations_df.select(pl.col("transcript_name").unique()).to_series()
 
     def exons_by_transcript_name(self, transcript_name: str) -> 'Annotations':
         """
@@ -352,7 +375,7 @@ class SpeciesInfo:
         self.assembly = ensembl.genomes[assembly_name]
         self.species_name = self.assembly["name"]
 
-    @functools.cached_property
+    @cached_property
     def genome(self):
         """
         Downloads the genome from Ensembl,
@@ -376,7 +399,13 @@ class SpeciesInfo:
 mouse = SpeciesInfo("Mouse", "GRCm39") # used for faster access to common mouse genome
 human = SpeciesInfo("Human", "GRCh38.p13") # used for faster access to common human genome
 
+
 def search_assemblies(txt: str):
+    """
+    just a wrapper to search for existing genome assemblies in Ensembl
+    :param txt: search string
+    :return: list of found assemblies
+    """
     return list(ensembl.search(txt))
 
 transcript_intersection = (set[str], (str, float, float)) #type alias for transcript intersections
