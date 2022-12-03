@@ -190,7 +190,7 @@ class Annotations:
         Getting just Ensembl gene id -> gene name correspondence is a common task as we often want to join such dataframe with others
         :return: NOTE: returns dataframe and not self
         """
-        return self.genes().annotations_df.select([pl.col("gene"), pl.col("gene_name")])
+        return self.genes().annotations_df.select([pl.col("gene"), pl.col("gene_name")]).unique()
 
     @cached_property
     def transcript_gene_names_df(self) -> pl.DataFrame:
@@ -200,7 +200,8 @@ class Annotations:
         """
         return self.annotations_df\
             .select([pl.col("transcript"), pl.col("transcript_name"), pl.col("gene"), pl.col("gene_name")])\
-            .filter(pl.col("transcript").is_not_null())
+            .filter(pl.col("transcript").is_not_null())\
+            .unique()
 
     def get_transcript_ids(self) -> pl.Series:
         """
