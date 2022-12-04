@@ -9,7 +9,7 @@ import genomepy
 from pycomfort.files import *
 import random
 from functools import cached_property
-
+from typing import Callable
 
 ensembl = genomepy.providers.EnsemblProvider() #instance of ensembl provider to be used for further genome and annotations downloads
 
@@ -54,7 +54,7 @@ class Annotations:
     annotations_df: pl.DataFrame
 
     #this column expression is used in the functions that extract sequences. It just get's the fields important for sequence extraciton in one column
-    coordinate_column: pl.Expr = pl.concat_list([pl.col("seqname"), pl.col("start"), pl.col("end")]).alias("sequence")
+    coordinate_col: pl.Expr = pl.concat_list([pl.col("seqname"), pl.col("start"), pl.col("end")]).alias("sequence")
 
     def __init__(self, gtf: Union[Path, str, pl.DataFrame]):
         """
@@ -68,6 +68,9 @@ class Annotations:
             # if we already have the dataframe (for example in chained calls) than just assign it
             self.annotations_df = gtf
 
+
+    def transform(self, fun: Callable[[pl.DataFrame], pl.DataFrame]):
+        return Annotations(fun(self.annotations_df))
 
     def read_GTF(self, path: Union[str, Path]) -> pl.DataFrame:
         """
@@ -331,7 +334,7 @@ class Annotations:
             if self.annotations_df.shape[0] > 100:
                 print(f"There are {self.annotations_df.shape} annotations,, loading sequences can take quite a while!")
             extract_sequence = functools.partial(_get_sequence_from_series, rc = rc, genome = genome)
-            with_sequences = self.annotations_df.with_column(self.coordinate_column.apply(extract_sequence))
+            with_sequences = self.annotations_df.with_column(self.coordinate_col.apply(extract_sequence))
             return Annotations(with_sequences)
 
     def get_intervals(self):
@@ -340,7 +343,7 @@ class Annotations:
         TODO: separate from annotation class
         :return:
         """
-        return seq(self.annotations_df.with_column(self.coordinate_column).sort(pl.col("start"))\
+        return seq(self.annotations_df.with_column(self.coordinate_col).sort(pl.col("start"))\
                 .select([pl.col("transcript_name") + pl.lit("_") + pl.col("exon_number"), pl.col("seqname"), pl.col("start"), pl.col("end")])\
                 .rows()).map(lambda row: TranscriptIntersection({row[0]}, row[1], row[2], row[3]))
 
@@ -350,7 +353,7 @@ class Annotations:
         TODO: separate from annotation class
         :return:
         """
-        return self.annotations_df.with_column(self.coordinate_column) \
+        return self.annotations_df.with_column(self.coordinate_col) \
             .select([pl.col("seqname"), pl.col("start"), pl.col("end")]).distinct().apply(lambda r: (set(r[0]), r[1], r[2])).rows()
 
 
