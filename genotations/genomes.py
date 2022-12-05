@@ -54,7 +54,14 @@ class Annotations:
     annotations_df: pl.DataFrame
 
     #this column expression is used in the functions that extract sequences. It just get's the fields important for sequence extraciton in one column
-    coordinate_col: pl.Expr = pl.concat_list([pl.col("seqname"), pl.col("start"), pl.col("end")]).alias("sequence")
+
+    coordinates_col: pl.Expr = pl.col("coordinates")
+    coordinates_compute_col = pl.concat_list([pl.col("seqname"), pl.col("start"), pl.col("end")]).alias("coordinates")
+    gene_col = pl.col("gene")
+    gene_name_col = pl.col("gene_name")
+    transcript_col = pl.col("transcript")
+    transcript_name_col: pl.Expr = pl.col("transcript_name")
+    transcript_exon_compute_col: pl.Expr = (transcript_name_col+pl.lit("_")+pl.col("exon_number")).alias("transcript_exon") #creates a column for exon names
 
     def __init__(self, gtf: Union[Path, str, pl.DataFrame]):
         """
@@ -68,9 +75,9 @@ class Annotations:
             # if we already have the dataframe (for example in chained calls) than just assign it
             self.annotations_df = gtf
 
-
     def transform(self, fun: Callable[[pl.DataFrame], pl.DataFrame]):
         return Annotations(fun(self.annotations_df))
+
 
     def read_GTF(self, path: Union[str, Path]) -> pl.DataFrame:
         """
@@ -99,6 +106,34 @@ class Annotations:
                  .with_column(att.str.extract("transcript_biotype \"[a-zA-Z0-9_.-]*", 0).str.replace("transcript_biotype \"", "").alias("transcript_biotype")) \
                  .with_column(att.str.extract("exon_number \"[0-9_.-]*", 0).str.replace("exon_number \"", "").cast(pl.UInt64).alias("exon_number"))
         return result
+
+    #TODO: check if this caching makes sense
+    def with_transcript_exon_column(self):
+        return self if "transcript_exon" in self.annotations_df.columns else Annotations(self.annotations_df.with_column(self.transcript_exon_compute_col))
+
+    def with_coordinates_column(self):
+        return self if "coordinates" in self.annotations_df.columns else Annotations(self.annotations_df.with_column(self.coordinates_compute_col))
+
+    def with_genes_transcripts_exons_coordinates_only(self):
+        """
+        TODO: rename properly, core idea is just to keep only essential fields
+        :return:
+        """
+        to_select = [self.gene_col, self.gene_name_col,
+                     self.transcript_col, self.transcript_name_col, pl.col("transcript_exon"),
+                     self.coordinates_col]
+        if "sequence" in self.annotations_df:
+            to_select.append(pl.col("sequence"))
+        return Annotations(self.exons().with_transcript_exon_column().with_coordinates_column().annotations_df.select(to_select))
+
+    def extend_with_annotations(self, expressions: pl.DataFrame):
+        cols = expressions.columns
+        assert "transcript" in cols or "gene" in cols, "expresison dataframe has to have either transcript or gene column"
+        by = self.transcript_col if "transcript" in cols else self.gene_col
+        return Annotations(self.annotations_df.join(expressions, on=self.transcript_col)).annotations_df
+
+    def extend_with_annotations_and_sequences(self, expressions: pl.DataFrame, genome: Genome, rc: bool = False):
+        return Annotations(self.extend_with_annotations(expressions)).with_sequences(genome, rc).annotations_df
 
     @cached_property
     def annotations_pandas(self) -> pandas.DataFrame:
@@ -226,11 +261,9 @@ class Annotations:
         :return:
         """
         from dna_features_viewer import GraphicFeature
-        selection = [pl.col("transcript_name"), pl.col("exon_number"), pl.col("start"), pl.col("end")] # make a list of columns to select
-        anno = self.with_gene_name_contains(gene_name).protein_coding().exons().annotations_df.select(selection).unique()
-        transcript_exon = (pl.col("transcript_name")+pl.lit("_")+pl.col("exon_number")).alias("transcript_exon") #creates a column for exon names
-        return seq(anno.with_column(transcript_exon).select(
-            ["transcript_exon", "start", "end"]).rows()) \
+        anno = self.with_gene_name_contains(gene_name).protein_coding().exons().with_transcript_exon_column().\
+            annotations_df.select(["transcript_exon", "start", "end"]).unique()
+        return seq(anno.rows()) \
                 .map(lambda t:  GraphicFeature(
                 start = t[1],
                 end=t[2],
@@ -332,28 +365,18 @@ class Annotations:
             return self
         else:
             if self.annotations_df.shape[0] > 100:
-                print(f"There are {self.annotations_df.shape} annotations,, loading sequences can take quite a while!")
-            extract_sequence = functools.partial(_get_sequence_from_series, rc = rc, genome = genome)
-            with_sequences = self.annotations_df.with_column(self.coordinate_col.apply(extract_sequence))
+                print(f"There are {self.annotations_df.shape} annotations, loading sequences can take quite a while!")
+            extract_sequence = functools.partial(_get_sequence_from_series, rc=rc, genome=genome)
+            with_sequences = self.with_coordinates_column().annotations_df.with_column(self.coordinates_col.apply(extract_sequence).alias("sequence"))
             return Annotations(with_sequences)
 
-    def get_intervals(self):
-        """
-        gets transcript interval, used for primers selection and other purposes
-        TODO: separate from annotation class
-        :return:
-        """
-        return seq(self.annotations_df.with_column(self.coordinate_col).sort(pl.col("start"))\
-                .select([pl.col("transcript_name") + pl.lit("_") + pl.col("exon_number"), pl.col("seqname"), pl.col("start"), pl.col("end")])\
-                .rows()).map(lambda row: TranscriptIntersection({row[0]}, row[1], row[2], row[3]))
 
     def get_intervals_with_set(self):
         """
         gets interval sets, used for primers selection and other purposes
-        TODO: separate from annotation class
         :return:
         """
-        return self.annotations_df.with_column(self.coordinate_col) \
+        return self.annotations_df.with_column(self.coordinates_col) \
             .select([pl.col("seqname"), pl.col("start"), pl.col("end")]).distinct().apply(lambda r: (set(r[0]), r[1], r[2])).rows()
 
 
@@ -411,72 +434,3 @@ def search_assemblies(txt: str):
     :return: list of found assemblies
     """
     return list(ensembl.search(txt))
-
-transcript_intersection = (set[str], (str, float, float)) #type alias for transcript intersections
-
-
-@dataclasses.dataclass
-class TranscriptIntersection:
-    """
-    TODO: move to primers module
-    """
-    transcripts: set[str]
-    contig: str
-    start: int
-    end: int
-
-    def to_graphical_feature(self):
-        from dna_features_viewer import GraphicRecord, GraphicFeature
-        return GraphicFeature(start=self.start, end=self.end, label=f"{self.contig}_inter_of_{len(self.transcripts)}", color =random_color())
-
-    def length(self) -> int:
-        return self.end - self.start
-
-    def count(self) -> int:
-        return len(self.transcripts)
-
-    def merge(self, b: 'TranscriptIntersection') -> 'TranscriptIntersection':
-        assert self.contig == b.contig, "to merge intervals contig should be the same"
-        if self.transcripts.issubset(b.transcripts):
-            return b
-        elif b.transcripts.issubset(self.transcripts):
-            return self
-        else:
-            start = max(self.start, b.start)
-            end = min(self.end, b.end)
-            joined: set[str] = self.transcripts.union(b.transcripts)
-            return TranscriptIntersection(joined, self.contig, start, end)
-
-    @staticmethod
-    def find_deepest_intersection(intervals: list['TranscriptIntersection'], min_len: int = 20, previous: list['TranscriptIntersection'] = None):
-        if len(intervals) < 2:
-            return previous
-        else:
-            novel_intervals = seq(intervals) \
-                              .order_by(lambda ab: ab.start) \
-                              .sliding(2, 1) \
-                              .map(lambda ab: ab[0].merge(ab[1])) \
-                              .filter(lambda ab: ab.length >= min_len)
-            return TranscriptIntersection.find_deepest_intersection(novel_intervals.to_list(), min_len, intervals)
-
-    @staticmethod
-    def merge_intervals(intervals: list['TranscriptIntersection'], num: int = 1, min_len: int = 20):
-        if num == 0 or len(intervals) < 2:
-            return intervals
-        else:
-            novel_intervals = seq(intervals) \
-                              .order_by(lambda ab: ab.start) \
-                              .sliding(2, 1) \
-                              .map(lambda ab: ab[0].merge(ab[1])) \
-                              .filter(lambda ab: ab.length >= min_len)
-            return TranscriptIntersection.merge_intervals(novel_intervals.to_list(), num - 1, min_len)
-
-    @staticmethod
-    def merge_interval_collection(intervals: list[transcript_intersection], min_len: int = 20, acc: list[list[transcript_intersection]] = None):
-        if acc is None:
-            return TranscriptIntersection.merge_interval_collection(intervals, min_len=min_len, acc=[intervals])
-        if len(acc[-1]) <= 1:
-            return acc
-        else:
-            acc.append(TranscriptIntersection.merge_intervals(intervals, len(acc), min_len))
-            return TranscriptIntersection.merge_interval_collection(intervals, min_len, acc)
