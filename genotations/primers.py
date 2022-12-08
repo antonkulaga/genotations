@@ -13,7 +13,7 @@ from dna_features_viewer import GraphicFeature, GraphicRecord
 from dataclasses import dataclass
 from genotations.genomes import random_color
 
-from genotations.genomes import TranscriptIntersection
+from genotations.intersections import TranscriptIntersection
 
 
 

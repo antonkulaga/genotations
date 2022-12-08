@@ -1,15 +1,7 @@
 import dataclasses
-import functools
-from enum import Enum
 
-import pandas
 import polars as pl
-from genomepy import Genome
-import genomepy
 from pycomfort.files import *
-import random
-from functools import cached_property
-from typing import Callable
 
 import genotations.genomes
 
@@ -39,7 +31,7 @@ class TranscriptIntersection:
     end: int
 
     def to_graphical_feature(self):
-        from dna_features_viewer import GraphicRecord, GraphicFeature
+        from dna_features_viewer import GraphicFeature
         return GraphicFeature(start=self.start, end=self.end, label=f"{self.contig}_inter_of_{len(self.transcripts)}", color=genotations.genomes.random_color())
 
     def length(self) -> int:

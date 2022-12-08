@@ -11,12 +11,27 @@ import random
 from functools import cached_property
 from typing import Callable
 
+class Strand(Enum):
+    Plus = "+"
+    Minus = "-"
+    Undefined = ""
+
+    def to_rc(self, feature_strand: str):
+        """
+        Converts to reverse_complement
+        :param feature_strand:
+        :return:
+        """
+        return True if self == Strand.Minus or (self == Strand.Undefined and feature_strand == "-") else False
+
+
+
 ensembl = genomepy.providers.EnsemblProvider() #instance of ensembl provider to be used for further genome and annotations downloads
 
-def _get_sequence_from_series(series:pl.Series, genome: Genome, rc: bool) -> str:
+def _get_sequence_from_series(series:pl.Series, genome: Genome, strand: Strand = Strand.Plus) -> str:
     #print("SERIES IS: ", series)
-    result = genome.get_seq(str(series[0]), int(series[1]), int(series[2]), rc)
-    #print("result IS: ", result)
+    rc = strand.to_rc(series[1])
+    result = genome.get_seq(str(series[0]), int(series[2]), int(series[3]), rc)
     return result
 
 def random_color():
@@ -56,11 +71,13 @@ class Annotations:
     #this column expression is used in the functions that extract sequences. It just get's the fields important for sequence extraciton in one column
 
     coordinates_col: pl.Expr = pl.col("coordinates")
-    coordinates_compute_col = pl.concat_list([pl.col("seqname"), pl.col("start"), pl.col("end")]).alias("coordinates")
-    gene_col = pl.col("gene")
-    gene_name_col = pl.col("gene_name")
-    transcript_col = pl.col("transcript")
+    coordinates_compute_col: pl.Expr = pl.concat_list([pl.col("seqname"), pl.col("strand"), pl.col("start"), pl.col("end")]).alias("coordinates")
+    gene_col: pl.Expr = pl.col("gene")
+    gene_name_col: pl.Expr = pl.col("gene_name")
+    transcript_col: pl.Expr = pl.col("transcript")
     transcript_name_col: pl.Expr = pl.col("transcript_name")
+    transcript_exon_col: pl.Expr = pl.col("transcript_exon")
+    sequence_col: pl.Expr = pl.col("sequence")
     transcript_exon_compute_col: pl.Expr = (transcript_name_col+pl.lit("_")+pl.col("exon_number")).alias("transcript_exon") #creates a column for exon names
 
     def __init__(self, gtf: Union[Path, str, pl.DataFrame]):
@@ -109,31 +126,50 @@ class Annotations:
 
     #TODO: check if this caching makes sense
     def with_transcript_exon_column(self):
-        return self if "transcript_exon" in self.annotations_df.columns else Annotations(self.annotations_df.with_column(self.transcript_exon_compute_col))
+        return self if self.transcript_exon_col.str in self.annotations_df.columns else Annotations(self.annotations_df.with_column(self.transcript_exon_compute_col))
 
     def with_coordinates_column(self):
         return self if "coordinates" in self.annotations_df.columns else Annotations(self.annotations_df.with_column(self.coordinates_compute_col))
+
+    def has_sequence(self) -> bool:
+        return "sequence" in self.annotations_df.columns
+
+    def _optional_sequence(self, selection: list[pl.col]) -> list[pl.col]:
+        return selection + [self.sequence_col] if self.has_sequence() else selection
+
+    def with_genes_only(self):
+        return Annotations(self.genes().annotations_df.select(self._optional_sequence([self.gene_col, self.gene_name_col])))
+
+    def with_genes_coordinates_only(self):
+        to_select = self._optional_sequence([self.gene_col, self.gene_name_col, self.coordinates_col])
+        return Annotations(self.genes().with_coordinates_column().annotations_df.select(to_select))
+
+    def with_genes_transcripts_only(self):
+        to_select = self._optional_sequence([self.gene_col, self.gene_name_col, self.transcript_col, self.transcript_name_col])
+        return Annotations(self.transcripts().annotations_df.select(to_select))
+
+    def with_genes_transcripts_coordinates_only(self):
+        to_select = self._optional_sequence([self.gene_col, self.gene_name_col, self.transcript_col, self.transcript_name_col, self.coordinates_col])
+        return Annotations(self.transcripts().with_coordinates_column().annotations_df.select(to_select))
 
     def with_genes_transcripts_exons_coordinates_only(self):
         """
         TODO: rename properly, core idea is just to keep only essential fields
         :return:
         """
-        to_select = [self.gene_col, self.gene_name_col,
+        to_select = self._optional_sequence([self.gene_col, self.gene_name_col,
                      self.transcript_col, self.transcript_name_col, pl.col("transcript_exon"),
-                     self.coordinates_col]
-        if "sequence" in self.annotations_df:
-            to_select.append(pl.col("sequence"))
+                     self.coordinates_col])
         return Annotations(self.exons().with_transcript_exon_column().with_coordinates_column().annotations_df.select(to_select))
 
     def extend_with_annotations(self, expressions: pl.DataFrame):
         cols = expressions.columns
         assert "transcript" in cols or "gene" in cols, "expresison dataframe has to have either transcript or gene column"
         by = self.transcript_col if "transcript" in cols else self.gene_col
-        return Annotations(self.annotations_df.join(expressions, on=self.transcript_col)).annotations_df
+        return Annotations(self.annotations_df.join(expressions, on=by)).annotations_df
 
-    def extend_with_annotations_and_sequences(self, expressions: pl.DataFrame, genome: Genome, rc: bool = False):
-        return Annotations(self.extend_with_annotations(expressions)).with_sequences(genome, rc).annotations_df
+    def extend_with_annotations_and_sequences(self, expressions: pl.DataFrame, genome: Genome, strand: Strand = Strand.Plus):
+        return Annotations(self.extend_with_annotations(expressions)).with_sequences(genome, strand).annotations_df
 
     @cached_property
     def annotations_pandas(self) -> pandas.DataFrame:
@@ -274,7 +310,7 @@ class Annotations:
             ) \
             .to_list()
 
-    def transcript_features_by_gene_name(self, gene_name, rc) -> list:
+    def transcript_features_by_gene_name(self, gene_name, strand: Strand = Strand.Plus) -> list:
         """
         Visualizing exon gene features, uses dna_feature_viewer library for drawing
         :param gene_name: part of the gene name of interest
@@ -283,23 +319,23 @@ class Annotations:
         from dna_features_viewer import GraphicFeature
         transcripts_for_gene = self.with_gene_name_contains(gene_name).transcripts()
         return seq(transcripts_for_gene.annotations_df.select(
-            ["transcript_name", "start", "end"]).rows()) \
+            ["transcript_name", "strand", "start", "end"]).rows()) \
                 .map(lambda t:  GraphicFeature(
-                    start =t[1] if not rc else t[2],
-                    end=t[2] if not rc else t[1],
+                    start=t[2] if not strand.to_rc(t[1]) else t[3],
+                    end=t[3] if not strand.to_rc(t[1]) else t[2],
                     label=t[0],
                     open_left=True,
                     open_right=True,
                     color=random_color(),
-                    strand=1 if not rc else -1
+                    strand=1 if not strand.to_rc(t[1]) else -1
                 )
             )\
             .to_list()
 
-    def _gene_to_graphical_record(self, gene_name: str, start: int, end: int,
+    def _gene_to_graphical_record(self, gene_name: str, gene_strand: str, start: int, end: int,
                                  sequence: str, exons: bool = True,
                                  transcript_intersections: list['TranscriptIntersection'] = None,
-                                 other_features: list = None, rc: bool = False
+                                 other_features: list = None, strand: Strand = Strand.Plus
                                  ):
         """
         Writes a graphical record from the gene with additional parameters, is considered protected function
@@ -310,11 +346,12 @@ class Annotations:
         :param exons:
         :param transcript_intersections:
         :param other_features:
-        :param rc:
+        :param strand:
         :return: GraphicalRecord that then can be rendered as plot by calling plot() method
         """
-        strand = -1 if rc else 1
+        strand = -1 if strand == Strand.Minus else 1
         from dna_features_viewer import GraphicRecord, GraphicFeature
+        rc = strand.to_rc(gene_strand)
         source = GraphicFeature(start=start if not rc else end, end=end if not rc else start, label=gene_name, open_left=True, open_right=True, strand=strand)
         features = self.exon_features_by_gene_name(gene_name) if exons else self.transcript_features_by_gene_name(gene_name, rc)
         intersection_features = [] if transcript_intersections is None else seq(transcript_intersections).map(lambda t: t.to_graphical_feature()).to_list()
@@ -323,7 +360,7 @@ class Annotations:
         return GraphicRecord(sequence=sequence, first_index=start, features=features)
 
 
-    def genes_visual(self, genome: Genome, rc: bool = False, exons: bool = True,
+    def genes_visual(self, genome: Genome, strand: Strand = Strand.Plus, exons: bool = True,
                      transcript_intersections: list['TranscriptIntersection'] = None,
                      other_features: list = None):
         """
@@ -335,9 +372,9 @@ class Annotations:
         :param other_features:
         :return:
         """
-        annotation_with_sequence = self.genes().with_sequences(genome, rc).annotations_df
+        annotation_with_sequence = self.genes().with_sequences(genome, strand).annotations_df
         return seq(
-                annotation_with_sequence.select(["gene_name", "start", "end", "sequence"]).rows()
+                annotation_with_sequence.select(["gene_name", "strand", "start", "end", "sequence"]).rows()
             ).map(lambda r: self._gene_to_graphical_record(
                 r[0], r[1], r[2], r[3],
                 exons=exons,
@@ -353,7 +390,7 @@ class Annotations:
         """
         return Annotations(self.by_transcript_name(transcript_name).exons().annotations_df.sort(pl.col("exon_number")))
 
-    def with_sequences(self, genome: Genome, rc: bool = False) -> 'Annotations':
+    def with_sequences(self, genome: Genome, strand: Strand = Strand.Plus) -> 'Annotations':
         """
         adds sequences to annotations_df dataframe using genome assembly specified by the user
         :param genome: genomepy genome assembly
@@ -366,7 +403,7 @@ class Annotations:
         else:
             if self.annotations_df.shape[0] > 100:
                 print(f"There are {self.annotations_df.shape} annotations, loading sequences can take quite a while!")
-            extract_sequence = functools.partial(_get_sequence_from_series, rc=rc, genome=genome)
+            extract_sequence = functools.partial(_get_sequence_from_series, strand, genome=genome)
             with_sequences = self.with_coordinates_column().annotations_df.with_column(self.coordinates_col.apply(extract_sequence).alias("sequence"))
             return Annotations(with_sequences)
 
