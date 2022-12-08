@@ -8,13 +8,21 @@ from genomepy import Genome
 import genomepy
 from pycomfort.files import *
 import random
-from functools import cached_property
+from functools import cached_property, cache
 from typing import Callable
 
 class Strand(Enum):
     Plus = "+"
     Minus = "-"
     Undefined = ""
+
+    def to_int(self) -> int:
+        if self == Strand.Undefined:
+            return 0
+        elif self == Strand.Minus:
+            return -1
+        else:
+            return 1
 
     def to_rc(self, feature_strand: str):
         """
@@ -77,8 +85,8 @@ class Annotations:
     transcript_col: pl.Expr = pl.col("transcript")
     transcript_name_col: pl.Expr = pl.col("transcript_name")
     transcript_exon_col: pl.Expr = pl.col("transcript_exon")
+    exon_col: pl.Expr = pl.col("exon")
     sequence_col: pl.Expr = pl.col("sequence")
-    transcript_exon_compute_col: pl.Expr = (transcript_name_col+pl.lit("_")+pl.col("exon_number")).alias("transcript_exon") #creates a column for exon names
 
     def __init__(self, gtf: Union[Path, str, pl.DataFrame]):
         """
@@ -96,6 +104,7 @@ class Annotations:
         return Annotations(fun(self.annotations_df))
 
 
+    @cache
     def read_GTF(self, path: Union[str, Path]) -> pl.DataFrame:
         """
         Reads GTF file with feature annotations.
@@ -113,6 +122,7 @@ class Annotations:
                                  "strand": pl.Categorical
                              }
                              )
+        transcript_exon_compute = (self.transcript_name_col+pl.lit("_")+pl.col("exon_number")).alias("transcript_exon")
         # does some preprocessing, mostly extracting attributes (which are multiple per cell in GTF files) to separate columns with regular expressions
         result = loaded \
                  .with_column(att.str.extract("gene_id \"[a-zA-Z0-9_.-]*", 0).str.replace("gene_id \"", "").alias("gene")) \
@@ -121,12 +131,11 @@ class Annotations:
                  .with_column(att.str.extract("transcript_id \"[a-zA-Z0-9_.-]*", 0).str.replace("transcript_id \"", "").alias("transcript")) \
                  .with_column(att.str.extract("transcript_name \"[a-zA-Z0-9_.-]*", 0).str.replace("transcript_name \"", "").alias("transcript_name")) \
                  .with_column(att.str.extract("transcript_biotype \"[a-zA-Z0-9_.-]*", 0).str.replace("transcript_biotype \"", "").alias("transcript_biotype")) \
-                 .with_column(att.str.extract("exon_number \"[0-9_.-]*", 0).str.replace("exon_number \"", "").cast(pl.UInt64).alias("exon_number"))
+                 .with_column(att.str.extract("exon_id \"[a-zA-Z0-9_.-]*", 0).str.replace("exon_id \"", "").cast(pl.Utf8).alias("exon")) \
+                 .with_column(att.str.extract("exon_number \"[0-9_.-]*", 0).str.replace("exon_number \"", "").cast(pl.UInt64).alias("exon_number")) \
+                 .with_column(transcript_exon_compute)
         return result
 
-    #TODO: check if this caching makes sense
-    def with_transcript_exon_column(self):
-        return self if self.transcript_exon_col.str in self.annotations_df.columns else Annotations(self.annotations_df.with_column(self.transcript_exon_compute_col))
 
     def with_coordinates_column(self):
         return self if "coordinates" in self.annotations_df.columns else Annotations(self.annotations_df.with_column(self.coordinates_compute_col))
@@ -158,9 +167,9 @@ class Annotations:
         :return:
         """
         to_select = self._optional_sequence([self.gene_col, self.gene_name_col,
-                     self.transcript_col, self.transcript_name_col, pl.col("transcript_exon"),
+                     self.transcript_col, self.transcript_name_col, self.exon_col, self.transcript_exon_col,
                      self.coordinates_col])
-        return Annotations(self.exons().with_transcript_exon_column().with_coordinates_column().annotations_df.select(to_select))
+        return Annotations(self.exons().with_coordinates_column().annotations_df.select(to_select))
 
     def extend_with_annotations(self, expressions: pl.DataFrame):
         cols = expressions.columns
@@ -297,7 +306,7 @@ class Annotations:
         :return:
         """
         from dna_features_viewer import GraphicFeature
-        anno = self.with_gene_name_contains(gene_name).protein_coding().exons().with_transcript_exon_column().\
+        anno = self.with_gene_name_contains(gene_name).protein_coding().exons().\
             annotations_df.select(["transcript_exon", "start", "end"]).unique()
         return seq(anno.rows()) \
                 .map(lambda t:  GraphicFeature(
@@ -349,11 +358,11 @@ class Annotations:
         :param strand:
         :return: GraphicalRecord that then can be rendered as plot by calling plot() method
         """
-        strand = -1 if strand == Strand.Minus else 1
+        strand = -1 if strand == Strand.Minus else Strand.Plus
         from dna_features_viewer import GraphicRecord, GraphicFeature
         rc = strand.to_rc(gene_strand)
-        source = GraphicFeature(start=start if not rc else end, end=end if not rc else start, label=gene_name, open_left=True, open_right=True, strand=strand)
-        features = self.exon_features_by_gene_name(gene_name) if exons else self.transcript_features_by_gene_name(gene_name, rc)
+        source = GraphicFeature(start=start if not rc else end, end=end if not rc else start, label=gene_name, open_left=True, open_right=True, strand=strand.to_int())
+        features = self.exon_features_by_gene_name(gene_name) if exons else self.transcript_features_by_gene_name(gene_name, strand)
         intersection_features = [] if transcript_intersections is None else seq(transcript_intersections).map(lambda t: t.to_graphical_feature()).to_list()
         other = [] if other_features is None else other_features
         features = [source] + features + intersection_features + other
@@ -366,7 +375,7 @@ class Annotations:
         """
         visualizes genes with dna_feature_viewer
         :param genome: genomepy genome that will be used to extract sequences
-        :param rc: if the sequence should be reverse-complement
+        :param strand: strand that we want to see
         :param exons: if we include exons in the render
         :param transcript_intersections:
         :param other_features:
@@ -376,10 +385,10 @@ class Annotations:
         return seq(
                 annotation_with_sequence.select(["gene_name", "strand", "start", "end", "sequence"]).rows()
             ).map(lambda r: self._gene_to_graphical_record(
-                r[0], r[1], r[2], r[3],
-                exons=exons,
+                gene_name=r[0], gene_strand=r[1], start=r[2], end=r[3], sequence=r[4],
+                exons=exons, strand=strand,
                 transcript_intersections=transcript_intersections,
-                other_features=other_features, rc=rc
+                other_features=other_features
                 )
             ).to_list()
 
@@ -403,7 +412,7 @@ class Annotations:
         else:
             if self.annotations_df.shape[0] > 100:
                 print(f"There are {self.annotations_df.shape} annotations, loading sequences can take quite a while!")
-            extract_sequence = functools.partial(_get_sequence_from_series, strand, genome=genome)
+            extract_sequence = functools.partial(_get_sequence_from_series, genome=genome, strand=strand)
             with_sequences = self.with_coordinates_column().annotations_df.with_column(self.coordinates_col.apply(extract_sequence).alias("sequence"))
             return Annotations(with_sequences)
 
