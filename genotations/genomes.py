@@ -34,13 +34,11 @@ class Strand(Enum):
 
 
 
-ensembl = genomepy.providers.EnsemblProvider() #instance of ensembl provider to be used for further genome and annotations downloads
-
 def _get_sequence_from_series(series:pl.Series, genome: Genome, strand: Strand = Strand.Plus) -> str:
     #print("SERIES IS: ", series)
     rc = strand.to_rc(series[1])
     result = genome.get_seq(str(series[0]), int(series[2]), int(series[3]), rc)
-    return result
+    return result.seq
 
 def random_color():
 
@@ -424,59 +422,3 @@ class Annotations:
         """
         return self.annotations_df.with_column(self.coordinates_col) \
             .select([pl.col("seqname"), pl.col("start"), pl.col("end")]).distinct().apply(lambda r: (set(r[0]), r[1], r[2])).rows()
-
-
-
-class SpeciesInfo:
-    """
-    Class to load data from genomepy in an easier way
-    """
-    assembly: dict
-    assembly_name: str
-    common_name: str
-    species_name: str
-
-    def __init__(self, common_name: str,  assembly_name: str):
-        """
-        Loads genome and annotations from genomepy in a more organized way
-        :param common_name: common name of the species
-        :param assembly_name: name of the genome assembly
-        """
-        assert assembly_name in ensembl.genomes, "assembly should be in assembly genomes!"
-        self.assembly_name = assembly_name
-        self.common_name = common_name
-        self.assembly = ensembl.genomes[assembly_name]
-        self.species_name = self.assembly["name"]
-
-    @cached_property
-    def genome(self):
-        """
-        Downloads the genome from Ensembl,
-        NOTE: this property is cached, can be used in a lazy way!
-        :return:
-        """
-        print("Downloading the genome with annotations from Ensembl, this may take a while. The results are cached")
-        genome = genomepy.install_genome(self.assembly_name, "ensembl", annotation=True)
-        return genome
-
-    @cached_property
-    def annotations(self) -> Annotations:
-        """
-        Annotation class that is in fact GTF loaded to polars,
-        NOTE: if the genome is not downloaded, also starts the download
-        :return: Annotation class instance for chained calls
-        """
-        return Annotations(self.genome.annotation_gtf_file)
-
-
-mouse = SpeciesInfo("Mouse", "GRCm39") # used for faster access to common mouse genome
-human = SpeciesInfo("Human", "GRCh38.p13") # used for faster access to common human genome
-
-
-def search_assemblies(txt: str):
-    """
-    just a wrapper to search for existing genome assemblies in Ensembl
-    :param txt: search string
-    :return: list of found assemblies
-    """
-    return list(ensembl.search(txt))
