@@ -11,6 +11,7 @@ import random
 from functools import cached_property, cache
 from typing import Callable
 
+
 class Strand(Enum):
     Plus = "+"
     Minus = "-"
@@ -26,7 +27,7 @@ class Strand(Enum):
 
     def to_rc(self, feature_strand: str):
         """
-        Converts to reverse_complement
+        Converts to reverse_complement taking into consideration feature strand information
         :param feature_strand:
         :return:
         """
@@ -34,10 +35,16 @@ class Strand(Enum):
 
 
 
-def _get_sequence_from_series(series:pl.Series, genome: Genome, strand: Strand = Strand.Plus) -> str:
-    #print("SERIES IS: ", series)
-    rc = strand.to_rc(series[1])
-    result = genome.get_seq(str(series[0]), int(series[2]), int(series[3]), rc)
+def _get_sequence_from_series(coordinates: Union[pl.Series, list], genome: Genome, strand: Strand = Strand.Undefined) -> str:
+    """
+    If the strand is undefined than
+    :param coordinates:
+    :param genome:
+    :param strand:
+    :return:
+    """
+    rc = strand.to_rc(coordinates[1])
+    result = genome.get_seq(str(coordinates[0]), int(coordinates[2]), int(coordinates[3]), rc)
     return result.seq
 
 def random_color():
@@ -135,7 +142,7 @@ class Annotations:
         return result
 
 
-    def with_coordinates_column(self):
+    def with_coordinates_column(self) -> 'Annotations':
         return self if "coordinates" in self.annotations_df.columns else Annotations(self.annotations_df.with_column(self.coordinates_compute_col))
 
     def has_sequence(self) -> bool:
@@ -144,18 +151,18 @@ class Annotations:
     def _optional_sequence(self, selection: list[pl.col]) -> list[pl.col]:
         return selection + [self.sequence_col] if self.has_sequence() else selection
 
-    def with_genes_only(self):
+    def with_genes_only(self) -> 'Annotations':
         return Annotations(self.genes().annotations_df.select(self._optional_sequence([self.gene_col, self.gene_name_col])))
 
-    def with_genes_coordinates_only(self):
+    def with_genes_coordinates_only(self) -> 'Annotations':
         to_select = self._optional_sequence([self.gene_col, self.gene_name_col, self.coordinates_col])
         return Annotations(self.genes().with_coordinates_column().annotations_df.select(to_select))
 
-    def with_genes_transcripts_only(self):
+    def with_genes_transcripts_only(self) -> 'Annotations':
         to_select = self._optional_sequence([self.gene_col, self.gene_name_col, self.transcript_col, self.transcript_name_col])
         return Annotations(self.transcripts().annotations_df.select(to_select))
 
-    def with_genes_transcripts_coordinates_only(self):
+    def with_genes_transcripts_coordinates_only(self) -> 'Annotations':
         to_select = self._optional_sequence([self.gene_col, self.gene_name_col, self.transcript_col, self.transcript_name_col, self.coordinates_col])
         return Annotations(self.transcripts().with_coordinates_column().annotations_df.select(to_select))
 
@@ -296,8 +303,11 @@ class Annotations:
         """
         return self.annotations_df.select(pl.col("transcript_name").unique()).to_series()
 
+    def between(self, start: int, end: int) -> 'Annotations':
+        return Annotations(self.annotations_df.filter(pl.col("start") >= start & pl.col("end") <= end))
 
-    def exon_features_by_gene_name(self, gene_name: str):
+
+    def exon_features_by_gene_name(self, gene_name: str) -> seq:
         """
         Visualizing exon gene features, uses dna_feature_viewer library for drawing
         :param gene_name:
@@ -397,12 +407,12 @@ class Annotations:
         """
         return Annotations(self.by_transcript_name(transcript_name).exons().annotations_df.sort(pl.col("exon_number")))
 
-    def with_sequences(self, genome: Genome, strand: Strand = Strand.Plus) -> 'Annotations':
+    def with_sequences(self, genome: Genome, strand: Strand = Strand.Undefined) -> 'Annotations':
         """
-        adds sequences to annotations_df dataframe using genome assembly specified by the user
-        :param genome: genomepy genome assembly
-        :param rc: if we want reverse complement of the sequence, False by default
-        :return: self with annotation_df extended by sequences for further chained calls
+        extends the annotations with sequences
+        :param genome: genomepy genome instance
+        :param strand: if Undefined - gets strand from features info and applied reverse complement if it is minus
+        :return:
         """
         if "sequence" in self.annotations_df.columns:
             print("sequence column already exists, no work needed!")
@@ -413,7 +423,6 @@ class Annotations:
             extract_sequence = functools.partial(_get_sequence_from_series, genome=genome, strand=strand)
             with_sequences = self.with_coordinates_column().annotations_df.with_column(self.coordinates_col.apply(extract_sequence).alias("sequence"))
             return Annotations(with_sequences)
-
 
     def get_intervals_with_set(self):
         """

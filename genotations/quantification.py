@@ -2,22 +2,15 @@
 Module that works with Salmon and other quantification results
 """
 
-import genomepy
-from genomepy import Genome
-import genotations.genomes
-from pathlib import Path
-from pycomfort.files import *
-import pyarrow
-import pandas as pd
-from functional import seq
-from typing import *
-from genotations.genomes import Annotations
 import functools
-import click
-import os
-
+from typing import *
 
 import polars as pl
+from genomepy import Genome
+from pycomfort.files import *
+
+from genotations.genomes import Annotations
+
 
 def read_quant(path: Path, transcripts: bool) -> pl.DataFrame:
     """
@@ -30,6 +23,7 @@ def read_quant(path: Path, transcripts: bool) -> pl.DataFrame:
     gene = pl.col("Name").str.split(".").apply(lambda s: s[0]).alias(alias)
     dtypes={"TPM": pl.datatypes.Float64, "EffectiveLength": pl.datatypes.Float64, "NumReads": pl.datatypes.Float64}
     return pl.read_csv(path, sep="\t", dtypes = dtypes).with_column(gene).select([gene, pl.col("TPM"), pl.col("EffectiveLength"), pl.col("NumReads")])
+
 
 def quants_from_bioproject(project: Path, name_part: str = "quant.sf", dir_part: str = "quant_") -> OrderedDict[str, pl.DataFrame]:
     """
@@ -48,11 +42,14 @@ def quants_from_bioproject(project: Path, name_part: str = "quant.sf", dir_part:
         for q in dirs(project).flat_map(lambda run: dirs(run).filter(lambda f: dir_part in f.name))
     ])
 
+
 def transcripts_from_bioproject(project: Path) -> OrderedDict[str, pl.DataFrame]:
     return quants_from_bioproject(project, "quant.sf")
 
+
 def genes_from_bioproject(project: Path) -> OrderedDict[str, pl.DataFrame]:
     return quants_from_bioproject(project, "quant.genes.sf")
+
 
 def search_in_expressions(df: pl.DataFrame,
                           gene_name: str,
@@ -96,6 +93,7 @@ def with_expressions_summaries(df: pl.DataFrame,
     avg = (sums / df.select(tpm_columns).shape[1]).alias("avg_TPM")
     df = df.with_column(sums).with_column(avg).sort(avg, True)
     return df if min_avg_value <= 0.0 else df.filter(pl.col("avg_TPM") >= min_avg_value)
+
 
 def summarized_expressions_from_bioproject(project: Path, transcripts: bool = True,
                                            tpm_columns: Union[pl.Expr, list[pl.Expr], "str", list[str]] = pl.col("^SRR[a-zA-Z0-9]+$")):

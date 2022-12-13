@@ -232,6 +232,7 @@ def suggest_primers(dna: str, opt_t: float = 60.0,
         """)
     return PrimerResults(result_dict)
 
+
 def suggest_interval_primers(s: pyfaidx.Sequence,
                              a: TranscriptIntersection, b: TranscriptIntersection,
                              opt_t: float = 60.0,
