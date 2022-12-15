@@ -3,6 +3,7 @@ from copy import copy
 from enum import Enum
 
 import Bio
+import genomepy
 from Bio import Seq
 import pyfaidx
 from primer3 import bindings
@@ -12,6 +13,9 @@ from typing import *
 from functional import seq
 from dna_features_viewer import GraphicFeature, GraphicRecord
 from dataclasses import dataclass
+
+import genotations.genomes
+from genotations.genomes import Strand
 from genotations.genomes import random_color
 
 from genotations.intersections import TranscriptIntersection
@@ -185,13 +189,25 @@ class PrimerResults:
         result.results = new_results
         return result
 
+def suggest_primers_for_transcript_by_exons(anno: genotations.genomes.Annotations, transcript_name: str,
+    from_exon: int, to_exon: int,
+    opt_t: float = 60.0,
+    min_t: float = 59.5,
+    max_t: float = 64.0,
+    min_product: int = 80,
+    max_product: int = 220,
+    genome: genotations.genomes.Genome = None,
+    debug: bool = False) -> list[PrimerResults]:
+    df = anno.with_transcript_name_in(transcript_name).get_transcript_sequences(genome)
+    return suggest_primers_by_exons(df, from_exon, to_exon, opt_t, min_t, max_t, min_product, max_product, debug)[transcript_name]
+
 def suggest_primers_by_exons(df: pl.DataFrame, from_exon: int, to_exon: int,
                         opt_t: float = 60.0,
                         min_t: float = 59.5,
                         max_t: float = 64.0,
                         min_product: int = 80,
                         max_product: int = 220,
-                        debug: bool = False):
+                        debug: bool = False) -> OrderedDict[str, list[PrimerResults]]:
 
     def apply_suggestion(row: list[str]):
         [transcript_name, sequence, spans, mRNA] = row
@@ -207,7 +223,7 @@ def suggest_primers_by_exons(df: pl.DataFrame, from_exon: int, to_exon: int,
     :return:
     """
     assert from_exon < to_exon, "should be from smaller exon to larger for the sake of clarity"
-    return OrderedDict( seq(df.rows()).map(apply_suggestion).to_list() )
+    return OrderedDict( seq(df.rows()).map(apply_suggestion).filter(lambda v:  len(v[1].results)>0).to_list() )
 
 
 
@@ -273,3 +289,39 @@ def suggest_interval_primers(s: pyfaidx.Sequence,
     return suggest_primers(str(s.seq),
                            primers_pair_ok=primers_pair_ok,
                            opt_t=opt_t, min_t=min_t, max_t=max_t, min_product=100, max_product=500)
+
+def suggest_interval_primers_by_fai(s: pyfaidx.Sequence,
+                             a: TranscriptIntersection, b: TranscriptIntersection,
+                             opt_t: float = 60.0,
+                             min_t: float = 59.9,
+                             max_t: float = 65.0) -> PrimerResults:
+    return suggest_interval_primers(str(s.seq), s.start, s.end, a, b, opt_t, min_t, max_t)
+
+
+def extract_one_gene(name: str, annotations: genotations.genomes.Annotations, genome: genomepy.Genome, strand: Strand = Strand.Undefined):
+    df: pl.DataFrame = annotations.with_gene_name_in(name).genes() \
+        .with_sequences(genome, strand=strand) \
+        .annotations_df.select(["start", "end", "strand", "sequence"])
+    assert df.shape[0] ==1, f"issue with the gene name as result shape is {df.shape}"
+    return df.rows()[0]
+
+def suggest_interval_primers(dna: str, start: int, end: int,
+                             a: TranscriptIntersection, b: TranscriptIntersection,
+                             opt_t: float = 60.0,
+                             min_t: float = 59.9,
+                             max_t: float = 65.0, max_product: int = 1000) -> PrimerResults:
+    a_left = a.start - start
+    a_len = a.end - a.start
+    b_left = b.start - end
+    b_len = b.end - b.start
+    primers_pair_ok = (a_left, a_len, b_left, b_len)
+    return suggest_primers(dna, primers_pair_ok=primers_pair_ok, opt_t=opt_t, min_t=min_t, max_t=max_t, min_product=100, max_product=max_product)
+
+def suggest_intervals_intersections_primers(dna: str, start: int, end: int, intervals: list[TranscriptIntersection]):
+    results: list[PrimerResults] = []
+    for i1 in range(0, len(intervals) -1):
+        for i2 in range(i1 + 1, len(intervals)):
+            #if abs(intervals[i1].end - intervals[i2].start) <= max_amplified:
+            results.append(suggest_interval_primers(dna, start, end, intervals[i1], intervals[i2]))
+    return [r for r in results if len(r.get_cleaned_results())>0]
+

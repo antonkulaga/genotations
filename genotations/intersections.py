@@ -14,11 +14,10 @@ class TranscriptIntersection:
     def extract_intervals(annotations: genotations.genomes.Annotations):
         """
         gets transcript interval, used for primers selection and other purposes
-        TODO: separate from annotation class
         :return:
         """
-        return seq(annotations.annotations_df.with_column(annotations.coordinates_col).sort(pl.col("start")) \
-                   .select([annotations.transcript_exon_col, pl.col("seqname"), pl.col("start"), pl.col("end")]) \
+        return seq(annotations.annotations_df.with_column(annotations.coordinates_col).sort(pl.col("start"))\
+                   .select([annotations.transcript_exon_col, pl.col("seqname"), pl.col("start"), pl.col("end")])\
                    .rows()).map(lambda row: TranscriptIntersection({row[0]}, row[1], row[2], row[3]))
 
 
@@ -61,7 +60,7 @@ class TranscriptIntersection:
                 .order_by(lambda ab: ab.start) \
                 .sliding(2, 1) \
                 .map(lambda ab: ab[0].merge(ab[1])) \
-                .filter(lambda ab: ab.length >= min_len)
+                .filter(lambda ab: ab.length() >= min_len)
             return TranscriptIntersection.find_deepest_intersection(novel_intervals.to_list(), min_len, intervals)
 
     @staticmethod
