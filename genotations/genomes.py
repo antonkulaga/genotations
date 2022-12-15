@@ -90,6 +90,7 @@ class Annotations:
     transcript_col: pl.Expr = pl.col("transcript")
     transcript_name_col: pl.Expr = pl.col("transcript_name")
     transcript_exon_col: pl.Expr = pl.col("transcript_exon")
+    exon_number_col: pl.Expr = pl.col("exon_number")
     exon_col: pl.Expr = pl.col("exon")
     sequence_col: pl.Expr = pl.col("sequence")
 
@@ -174,17 +175,17 @@ class Annotations:
         :return:
         """
         to_select = self._optional_sequence([self.gene_col, self.gene_name_col,
-                     self.transcript_col, self.transcript_name_col, self.exon_col, self.transcript_exon_col,
-                     self.coordinates_col])
+                    self.transcript_col, self.transcript_name_col, self.exon_col, self.exon_number_col,
+                    self.transcript_exon_col, self.coordinates_col])
         return Annotations(self.exons().with_coordinates_column().annotations_df.select(to_select))
 
     def extend_with_annotations(self, expressions: pl.DataFrame):
         cols = expressions.columns
-        assert "transcript" in cols or "gene" in cols, "expresison dataframe has to have either transcript or gene column"
+        assert "transcript" in cols or "gene" in cols, "expression dataframe has to have either transcript or gene column"
         by = self.transcript_col if "transcript" in cols else self.gene_col
         return Annotations(self.annotations_df.join(expressions, on=by)).annotations_df
 
-    def extend_with_annotations_and_sequences(self, expressions: pl.DataFrame, genome: Genome, strand: Strand = Strand.Plus):
+    def extend_with_annotations_and_sequences(self, expressions: pl.DataFrame, genome: Genome, strand: Strand = Strand.Undefined):
         return Annotations(self.extend_with_annotations(expressions)).with_sequences(genome, strand).annotations_df
 
     @cached_property
@@ -306,7 +307,7 @@ class Annotations:
         if not self.has_sequence():
             return self.with_sequences(genome, strand).get_transcript_sequences()
         else:
-            return self.annotations_df.sort([self.transcript_name_col, pl.col("exon_number")])\
+            return self.annotations_df.sort([self.transcript_name_col, self.exon_number_col])\
                 .groupby(self.transcript_name_col, maintain_order=True)\
                 .agg([self.sequence_col])\
                 .with_column(pl.col("sequence").apply(self._strings_to_spans).alias("spans"))\
@@ -359,7 +360,7 @@ class Annotations:
             ) \
             .to_list()
 
-    def transcript_features_by_gene_name(self, gene_name, strand: Strand = Strand.Plus) -> list:
+    def transcript_features_by_gene_name(self, gene_name, strand: Strand = Strand.Undefined) -> list:
         """
         Visualizing exon gene features, uses dna_feature_viewer library for drawing
         :param gene_name: part of the gene name of interest
@@ -409,7 +410,7 @@ class Annotations:
         return GraphicRecord(sequence=sequence, first_index=start, features=features)
 
 
-    def genes_visual(self, genome: Genome, strand: Strand = Strand.Plus, exons: bool = True,
+    def genes_visual(self, genome: Genome, strand: Strand = Strand.Undefined, exons: bool = True,
                      transcript_intersections: list['TranscriptIntersection'] = None,
                      other_features: list = None):
         """
@@ -437,7 +438,7 @@ class Annotations:
         :param transcript_name: transcript from which to take exons
         :return: self with filtered annotation_df for further chained calls
         """
-        return Annotations(self.by_transcript_name(transcript_name).exons().annotations_df.sort(pl.col("exon_number")))
+        return Annotations(self.by_transcript_name(transcript_name).exons().annotations_df.sort(self.exon_number_col))
 
     def with_sequences(self, genome: Genome, strand: Strand = Strand.Undefined) -> 'Annotations':
         """

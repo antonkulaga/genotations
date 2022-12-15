@@ -7,7 +7,7 @@ here = os.path.abspath(os.path.dirname(__file__))
 with codecs.open(os.path.join(here, "README.md"), encoding="utf-8") as fh:
     long_description = "\n" + fh.read()
 
-VERSION = '0.1.2'
+VERSION = '0.1.3'
 DESCRIPTION = 'Genotations - python library to work with genomes and primers'
 LONG_DESCRIPTION = 'Genotations - python library to work with genomes and primers'
 
@@ -15,7 +15,7 @@ LONG_DESCRIPTION = 'Genotations - python library to work with genomes and primer
 setup(
     name="genotations",
     version=VERSION,
-    author="antonkulaga (Anton Kualga)",
+    author="antonkulaga (Anton Kulaga)",
     author_email="<antonkulaga@gmail.com>",
     description=DESCRIPTION,
     long_description_content_type="text/markdown",
