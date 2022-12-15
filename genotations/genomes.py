@@ -108,6 +108,8 @@ class Annotations:
     def transform(self, fun: Callable[[pl.DataFrame], pl.DataFrame]):
         return Annotations(fun(self.annotations_df))
 
+    def sort_by_transcript_exon(self):
+        return self.annotations_df.sort([pl.col(self.transcript_name_col), self.exon_col])
 
     @cache
     def read_GTF(self, path: Union[str, Path]) -> pl.DataFrame:
@@ -192,6 +194,22 @@ class Annotations:
         :return:
         """
         return self.annotations_df.to_pandas()
+
+    def with_gene_name_in(self, *genes) -> 'Annotations':
+        """
+        Keeps only features which contains specified string in their gene_name
+        :param gene_name: part of gene_name to search for, WARNING: case sensitive!
+        :return: Self with filtered annotation_df dataframe for further chained calls
+        """
+        result = self.annotations_df \
+            .filter(pl.col("gene_name").is_in(genes))
+        return Annotations(result)
+
+    def with_transcript_name_in(self, *transcripts) -> 'Annotations':
+
+        result = self.annotations_df \
+            .filter(pl.col("transcript_name").is_in(transcripts))
+        return Annotations(result)
 
     def with_gene_name_contains(self, gene_name: str) -> 'Annotations':
         """
@@ -279,6 +297,20 @@ class Annotations:
         :return: NOTE: returns dataframe and not self
         """
         return self.genes().annotations_df.select([pl.col("gene"), pl.col("gene_name")]).unique()
+
+    def _strings_to_spans(self, strings: list[str]):
+        return seq(strings).fold_left( ((0, 0),), lambda acc, el: acc + ((acc[-1][0]+acc[-1][1], len(el)),) ).to_list()[1:]
+
+    def get_transcript_sequences(self, genome: genomepy.genome = None, strand: Strand = Strand.Undefined) -> pl.DataFrame:
+        assert genome is not None or self.has_sequence(), "there should be either sequence or genome available!"
+        if not self.has_sequence():
+            return self.with_sequences(genome, strand).get_transcript_sequences()
+        else:
+            return self.annotations_df.sort([self.transcript_name_col, pl.col("exon_number")])\
+                .groupby(self.transcript_name_col, maintain_order=True)\
+                .agg([self.sequence_col])\
+                .with_column(pl.col("sequence").apply(self._strings_to_spans).alias("spans"))\
+                .with_column(pl.col("sequence").apply(lambda r: seq(r).reduce(lambda a,b : a+b)).alias("mRNA"))
 
     @cached_property
     def transcript_gene_names_df(self) -> pl.DataFrame:

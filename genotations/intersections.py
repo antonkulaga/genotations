@@ -17,7 +17,7 @@ class TranscriptIntersection:
         TODO: separate from annotation class
         :return:
         """
-        return seq(annotations.annotations_df.with_column(annotations.coordinate_col).sort(pl.col("start")) \
+        return seq(annotations.annotations_df.with_column(annotations.coordinates_col).sort(pl.col("start")) \
                    .select([annotations.transcript_exon_col, pl.col("seqname"), pl.col("start"), pl.col("end")]) \
                    .rows()).map(lambda row: TranscriptIntersection({row[0]}, row[1], row[2], row[3]))
 

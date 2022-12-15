@@ -1,4 +1,5 @@
 import re
+from copy import copy
 from enum import Enum
 
 import Bio
@@ -14,7 +15,7 @@ from dataclasses import dataclass
 from genotations.genomes import random_color
 
 from genotations.intersections import TranscriptIntersection
-
+import polars as pl
 
 
 class PrimersMode(Enum):
@@ -183,6 +184,32 @@ class PrimerResults:
         result = copy(self)
         result.results = new_results
         return result
+
+def suggest_primers_by_exons(df: pl.DataFrame, from_exon: int, to_exon: int,
+                        opt_t: float = 60.0,
+                        min_t: float = 59.5,
+                        max_t: float = 64.0,
+                        min_product: int = 80,
+                        max_product: int = 220,
+                        debug: bool = False):
+
+    def apply_suggestion(row: list[str]):
+        [transcript_name, sequence, spans, mRNA] = row
+        from_span = spans[from_exon-1]
+        to_span = spans[to_exon-1]
+        primers_pair_ok = (from_span[0], from_span[1], to_span[0], to_span[1])
+        return (transcript_name, suggest_primers(mRNA, opt_t, min_t, max_t,
+                               primers_pair_ok = primers_pair_ok, debug=debug,
+                               min_product=min_product, max_product=max_product))
+    """
+    assuming ['transcript_name', 'sequence', 'spans', 'mRNA'] structure
+    :param df:
+    :return:
+    """
+    assert from_exon < to_exon, "should be from smaller exon to larger for the sake of clarity"
+    return OrderedDict( seq(df.rows()).map(apply_suggestion).to_list() )
+
+
 
 def suggest_primers(dna: str, opt_t: float = 60.0,
                     min_t: float = 57.0,  max_t: float = 62.0,
