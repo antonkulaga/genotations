@@ -14,7 +14,7 @@ dependencies:
     - biopython
     - pip
     - pip:
-        - pycomfort
+        - pycomfort>=0.0.12
         - polars
         - genomepy
         - git+https://github.com/MrTomRod/DnaFeaturesViewer #to fix bug with biopython 1.8
