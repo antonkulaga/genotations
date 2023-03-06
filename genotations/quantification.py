@@ -10,6 +10,7 @@ from genomepy import Genome
 from pycomfort.files import *
 
 from genotations.genomes import Annotations
+import collections
 
 
 def read_quant(path: Path, transcripts: bool) -> pl.DataFrame:
@@ -25,6 +26,18 @@ def read_quant(path: Path, transcripts: bool) -> pl.DataFrame:
     return pl.read_csv(path, sep="\t", dtypes = dtypes).with_column(gene).select([gene, pl.col("TPM"), pl.col("EffectiveLength"), pl.col("NumReads")])
 
 
+def quant_from_run(run: Path, name_part: str = "quant.sf", dir_part: str = "quant_") -> Optional[pl.DataFrame]:
+    transcripts = "gene" not in dir_part and "gene" not in name_part
+    qq = dirs(run).filter(lambda f: dir_part in f.name)
+    if qq.len() < 1:
+        print(f"could not find quantification data for {run}")
+        return None
+    else:
+        if qq.len() > 1:
+            print("there are more than two quant files, we are taking the first one")
+        q = qq.first()
+        return read_quant(files(q).filter(lambda f: name_part in f.name).first(), transcripts)
+
 def quants_from_bioproject(project: Path, name_part: str = "quant.sf", dir_part: str = "quant_") -> OrderedDict[str, pl.DataFrame]:
     """
     reads Salmon quant.sf files from the folder and writes them into Ordered dictionary of polars dataframes
@@ -34,7 +47,7 @@ def quants_from_bioproject(project: Path, name_part: str = "quant.sf", dir_part:
     :return:
     """
     transcripts = "gene" not in dir_part and "gene" not in name_part
-    return OrderedDict([
+    return collections.OrderedDict([
         (
             q.name.replace(dir_part, ""),
             read_quant(files(q).filter(lambda f: name_part in f.name).first(), transcripts)
@@ -68,6 +81,12 @@ def search_in_expressions(df: pl.DataFrame,
     return df if genome is None else Annotations(df).with_sequences(genome).annotations_df
 
 
+def merge_expressions(expressions: OrderedDict[str, pl.DataFrame], transcripts: bool = True):
+    name = "transcript" if transcripts else "gene"
+    frames = [v.select([pl.col(name), pl.col("TPM").alias(k)]) for k, v in expressions.items()]
+    return functools.reduce(lambda a, b: a.join(b, on=name), frames)
+
+
 def expressions_from_bioproject(project: Path, transcripts: bool = True) -> pl.DataFrame:
     """
     Merges expression from multiple Salmon quant files to one expressions/samples matrix
@@ -75,10 +94,8 @@ def expressions_from_bioproject(project: Path, transcripts: bool = True) -> pl.D
     :param transcripts:
     :return:
     """
-    expressions: OrderedDict = transcripts_from_bioproject(project) if transcripts else genes_from_bioproject(project)
-    name = "transcript" if transcripts else "gene"
-    frames = [v.select([pl.col(name), pl.col("TPM").alias(k)]) for k, v in expressions.items()]
-    return functools.reduce(lambda a, b: a.join(b, on=name), frames)
+    expressions: OrderedDict[str, pl.DataFrame] = transcripts_from_bioproject(project) if transcripts else genes_from_bioproject(project)
+    return merge_expressions(expressions, transcripts)
 
 
 def with_expressions_summaries(df: pl.DataFrame,
