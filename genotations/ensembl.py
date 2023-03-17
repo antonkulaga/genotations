@@ -1,4 +1,5 @@
 from functools import cached_property
+from typing import Optional
 
 import genomepy
 
@@ -24,8 +25,10 @@ class SpeciesInfo:
     assembly_name: str
     common_name: str
     species_name: str
+    genomes_dir: Optional[str]
 
-    def __init__(self, common_name: str,  assembly_name: str):
+
+    def __init__(self, common_name: str,  assembly_name: str, genomes_dir: Optional[str] = None):
         """
         Loads genome and annotations from genomepy in a more organized way
         :param common_name: common name of the species
@@ -36,6 +39,7 @@ class SpeciesInfo:
         self.common_name = common_name
         self.assembly = ens.genomes[assembly_name]
         self.species_name = self.assembly["name"]
+        self.genomes_dir = genomes_dir
 
     @cached_property
     def genome(self):
@@ -45,7 +49,7 @@ class SpeciesInfo:
         :return:
         """
         print("Downloading the genome with annotations from Ensembl, this may take a while. The results are cached")
-        genome = genomepy.install_genome(self.assembly_name, "ensembl", annotation=True)
+        genome = genomepy.install_genome(self.assembly_name, "ensembl", annotation=True, genomes_dir=self.genomes_dir)
         return genome
 
     @cached_property
@@ -371,10 +375,16 @@ species: dict[str, SpeciesInfo] = {
     'Xiphophorus_maculatus': SpeciesInfo("Platyfish", "X_maculatus-5.0-male"),
     'Zalophus_californianus': SpeciesInfo("California sea lion", "mZalCal1.pri"),
     'Zonotrichia_albicollis': SpeciesInfo("White-throated sparrow", "Zonotrichia_albicollis-1.0.1"),
-    'Zosterops_lateralis_melanops': SpeciesInfo("Silver-eye", "ASM128173v1")
+    'Zosterops_lateralis_melanops': SpeciesInfo("Silver-eye", "ASM128173v1"),
+    'Chlamydomonas reinhardtii':  SpeciesInfo("Chlamy", "Chlamydomonas_reinhardtii_v5.5"),
+    'Caenorhabditis elegans': SpeciesInfo("C. elegans", 'WBcel235')
+
 }
 
 human = species["Homo_sapiens"] # used for faster access to common human genome
 mouse = species["Mus_musculus"] # used for faster access to common mouse genome
 rat = species["Rattus_norvegicus"] # rats
 cow = species["Bos_taurus"]
+chlamy = species['Chlamydomonas reinhardtii']
+algae = chlamy
+worm = species['Caenorhabditis elegans']
