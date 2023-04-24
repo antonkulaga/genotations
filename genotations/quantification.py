@@ -23,7 +23,7 @@ def read_quant(path: Path, transcripts: bool) -> pl.DataFrame:
     alias = "transcript" if transcripts else "gene"
     gene = pl.col("Name").str.split(".").apply(lambda s: s[0]).alias(alias)
     dtypes={"TPM": pl.datatypes.Float64, "EffectiveLength": pl.datatypes.Float64, "NumReads": pl.datatypes.Float64}
-    return pl.read_csv(path, sep="\t", dtypes = dtypes).with_column(gene).select([gene, pl.col("TPM"), pl.col("EffectiveLength"), pl.col("NumReads")])
+    return pl.read_csv(path, sep="\t", dtypes = dtypes).with_columns([gene]).select([gene, pl.col("TPM"), pl.col("EffectiveLength"), pl.col("NumReads")])
 
 
 def quant_from_run(run: Path, name_part: str = "quant.sf", dir_part: str = "quant_") -> Optional[pl.DataFrame]:
@@ -108,7 +108,7 @@ def with_expressions_summaries(df: pl.DataFrame,
     """
     sums = pl.sum(tpm_columns).alias("sum_TPM")
     avg = (sums / df.select(tpm_columns).shape[1]).alias("avg_TPM")
-    df = df.with_column(sums).with_column(avg).sort(avg, True)
+    df = df.with_column([sums, avg]).sort(avg, True)
     return df if min_avg_value <= 0.0 else df.filter(pl.col("avg_TPM") >= min_avg_value)
 
 

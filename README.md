@@ -19,6 +19,26 @@ Install with pip:
 ```bash
 pip install genotations
 ```
+In some cases you may also need to install ucsc annotation tools, you can add them to your micromamba/conda environment as they are installed from bioconda channel.
+Here how it may look in your environment file:
+```yaml
+name: genotations
+channels:
+  - conda-forge
+  - BjornFJohansson
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - ucsc-bedtogenepred
+  - ucsc-genepredtobed
+  - ucsc-genepredtogtf
+  - ucsc-gff3togenepred
+  - ucsc-gtftogenepred
+  - pip
+  - pip:
+      - genotations
+```
 
 Now you can start using it, for example:
 ```python

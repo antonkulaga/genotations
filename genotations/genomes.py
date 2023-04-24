@@ -130,23 +130,24 @@ class Annotations:
                                  "strand": pl.Categorical
                              }
                              )
-        transcript_exon_compute = (self.transcript_name_col+pl.lit("_")+pl.col("exon_number")).alias("transcript_exon")
+        transcript_exon_compute = (self.transcript_name_col+pl.lit("_")+pl.col("exon_number").cast(pl.Utf8)).alias("transcript_exon")
         # does some preprocessing, mostly extracting attributes (which are multiple per cell in GTF files) to separate columns with regular expressions
-        result = loaded \
-                 .with_column(att.str.extract("gene_id \"[a-zA-Z0-9_.-]*", 0).str.replace("gene_id \"", "").alias("gene")) \
-                 .with_column(att.str.extract("gene_name \"[a-zA-Z0-9_.-]*", 0).str.replace("gene_name \"", "").alias("gene_name")) \
-                 .with_column(att.str.extract("gene_biotype \"[a-zA-Z0-9_.-]*", 0).str.replace("transcript_biotype \"", "").alias("transcript_biotype")) \
-                 .with_column(att.str.extract("transcript_id \"[a-zA-Z0-9_.-]*", 0).str.replace("transcript_id \"", "").alias("transcript")) \
-                 .with_column(att.str.extract("transcript_name \"[a-zA-Z0-9_.-]*", 0).str.replace("transcript_name \"", "").alias("transcript_name")) \
-                 .with_column(att.str.extract("transcript_biotype \"[a-zA-Z0-9_.-]*", 0).str.replace("transcript_biotype \"", "").alias("transcript_biotype")) \
-                 .with_column(att.str.extract("exon_id \"[a-zA-Z0-9_.-]*", 0).str.replace("exon_id \"", "").cast(pl.Utf8).alias("exon")) \
-                 .with_column(att.str.extract("exon_number \"[0-9_.-]*", 0).str.replace("exon_number \"", "").cast(pl.UInt64).alias("exon_number")) \
-                 .with_column(transcript_exon_compute)
+        cols = [
+            att.str.extract("gene_id \"[a-zA-Z0-9_.-]*", 0).str.replace("gene_id \"", "").alias("gene") ,
+            att.str.extract("gene_name \"[a-zA-Z0-9_.-]*", 0).str.replace("gene_name \"", "").alias("gene_name"),
+            att.str.extract("gene_biotype \"[a-zA-Z0-9_.-]*", 0).str.replace("gene_biotype \"", "").alias("gene_biotype"),
+            att.str.extract("transcript_id \"[a-zA-Z0-9_.-]*", 0).str.replace("transcript_id \"", "").alias("transcript"),
+            att.str.extract("transcript_name \"[a-zA-Z0-9_.-]*", 0).str.replace("transcript_name \"", "").alias("transcript_name"),
+            att.str.extract("transcript_biotype \"[a-zA-Z0-9_.-]*", 0).str.replace("transcript_biotype \"", "").alias("transcript_biotype"),
+            att.str.extract("exon_id \"[a-zA-Z0-9_.-]*", 0).str.replace("exon_id \"", "").cast(pl.Utf8).alias("exon"),
+            att.str.extract("exon_number \"[0-9_.-]*", 0).str.replace("exon_number \"", "").cast(pl.UInt64).alias("exon_number"),
+        ]
+        result = loaded.with_columns(cols).with_columns([transcript_exon_compute])
         return result
 
 
     def with_coordinates_column(self) -> 'Annotations':
-        return self if "coordinates" in self.annotations_df.columns else Annotations(self.annotations_df.with_column(self.coordinates_compute_col))
+        return self if "coordinates" in self.annotations_df.columns else Annotations(self.annotations_df.with_columns([self.coordinates_compute_col]))
 
     def has_sequence(self) -> bool:
         return "sequence" in self.annotations_df.columns
@@ -307,11 +308,14 @@ class Annotations:
         if not self.has_sequence():
             return self.with_sequences(genome, strand).get_transcript_sequences()
         else:
+            extra_cols = [
+                pl.col("sequence").apply(self._strings_to_spans).alias("spans"),
+                pl.col("sequence").apply(lambda r: seq(r).reduce(lambda a,b : a+b)).alias("mRNA")
+            ]
             return self.annotations_df.sort([self.transcript_name_col, self.exon_number_col])\
                 .groupby(self.transcript_name_col, maintain_order=True)\
                 .agg([self.sequence_col])\
-                .with_column(pl.col("sequence").apply(self._strings_to_spans).alias("spans"))\
-                .with_column(pl.col("sequence").apply(lambda r: seq(r).reduce(lambda a,b : a+b)).alias("mRNA"))
+                .with_columns(extra_cols)
 
     @cached_property
     def transcript_gene_names_df(self) -> pl.DataFrame:
@@ -454,7 +458,7 @@ class Annotations:
             if self.annotations_df.shape[0] > 100:
                 print(f"There are {self.annotations_df.shape} annotations, loading sequences can take quite a while!")
             extract_sequence = functools.partial(_get_sequence_from_series, genome=genome, strand=strand)
-            with_sequences = self.with_coordinates_column().annotations_df.with_column(self.coordinates_col.apply(extract_sequence).alias("sequence"))
+            with_sequences = self.with_coordinates_column().annotations_df.with_columns([self.coordinates_col.apply(extract_sequence).alias("sequence")])
             return Annotations(with_sequences)
 
     def get_intervals_with_set(self):
@@ -462,5 +466,5 @@ class Annotations:
         gets interval sets, used for primers selection and other purposes
         :return:
         """
-        return self.annotations_df.with_column(self.coordinates_col) \
+        return self.annotations_df.with_columns([self.coordinates_col]) \
             .select([pl.col("seqname"), pl.col("start"), pl.col("end")]).distinct().apply(lambda r: (set(r[0]), r[1], r[2])).rows()

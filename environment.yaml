@@ -12,6 +12,11 @@ dependencies:
     - twine
     - pyarrow
     - biopython
+    - ucsc-bedtogenepred
+    - ucsc-genepredtobed
+    - ucsc-genepredtogtf
+    - ucsc-gff3togenepred
+    - ucsc-gtftogenepred
     - pip
     - pip:
         - pycomfort>=0.0.12
