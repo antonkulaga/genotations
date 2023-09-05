@@ -19,7 +19,8 @@ dependencies:
     - ucsc-gtftogenepred
     - pip
     - pip:
-        - pycomfort>=0.0.12
+        - pycomfort>=0.0.14
         - polars
         - genomepy
+        - loguru
         - git+https://github.com/MrTomRod/DnaFeaturesViewer #to fix bug with biopython 1.8

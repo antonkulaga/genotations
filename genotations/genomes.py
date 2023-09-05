@@ -106,6 +106,7 @@ class Annotations:
             # if we already have the dataframe (for example in chained calls) than just assign it
             self.annotations_df = gtf
 
+
     def transform(self, fun: Callable[[pl.DataFrame], pl.DataFrame]):
         return Annotations(fun(self.annotations_df))
 
@@ -121,7 +122,7 @@ class Annotations:
         :return: polards datafra
         """
         att = pl.col("attribute")
-        loaded = pl.read_csv(str(path), has_header=False, comment_char="#", sep="\t",
+        loaded = pl.read_csv(str(path), has_header=False, comment_char="#", separator="\t",
                              new_columns=["seqname", "source", "feature", "start", "end", "score", "strand", "frame", "attribute"],
                              dtypes={
                                  #sometimes polars makes mistakes in automatic type derivation with some fields

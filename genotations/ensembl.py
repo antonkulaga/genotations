@@ -1,7 +1,12 @@
 from functools import cached_property
-from typing import Optional
-
+from pathlib import Path
+from typing import Optional, Union
+from pathlib import Path
+import shutil
+import gzip
+from typing import Union
 import genomepy
+import loguru
 
 from genotations.genomes import Annotations
 
@@ -26,20 +31,60 @@ class SpeciesInfo:
     common_name: str
     species_name: str
     genomes_dir: Optional[str]
+    broken: bool = False
+    gtf_path: str
 
 
-    def __init__(self, common_name: str,  assembly_name: str, genomes_dir: Optional[str] = None):
+
+    @staticmethod
+    def download_and_ungzip_if_needed(annotation_gtf_file: str, gtf_path: str) -> Union[str, None]:
+        # Convert the string paths to Path objects
+        annotation_gtf_path = Path(annotation_gtf_file)
+        gtf_file_path = Path(gtf_path)
+
+        # Get the parent folder from the annotation_gtf_file
+        parent_folder = annotation_gtf_path.parent
+
+        # Create the full path where the gtf_path file will be saved
+        destination_path = parent_folder / gtf_file_path.name
+
+        # Download the file (simulating the download with a file copy for now)
+        shutil.copy(gtf_file_path, destination_path)
+
+        # If the file ends with .gz, ungzip it
+        if destination_path.suffix == '.gz':
+            with gzip.open(destination_path, 'rb') as f_in:
+                with open(destination_path.with_suffix(''), 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            destination_path.unlink()
+            return str(destination_path.with_suffix(''))
+
+        return str(destination_path)
+
+
+
+    def __init__(self, common_name: str,  assembly_name: str, genomes_dir: Optional[str] = None, alternative_gtf: Optional[Union[Path, str]] =  None):
         """
         Loads genome and annotations from genomepy in a more organized way
         :param common_name: common name of the species
         :param assembly_name: name of the genome assembly
         """
-        assert assembly_name in ens.genomes, "assembly should be in assembly genomes!"
+        if assembly_name not in ens.genomes:
+            loguru.logger.error(f"assembly {assembly_name} should be in assembly genomes!")
+            self.broken = True
         self.assembly_name = assembly_name
         self.common_name = common_name
-        self.assembly = ens.genomes[assembly_name]
-        self.species_name = self.assembly["name"]
-        self.genomes_dir = genomes_dir
+        if not self.broken:
+            self.assembly = ens.genomes[assembly_name]
+            self.species_name = self.assembly["name"]
+            self.genomes_dir = genomes_dir
+            if alternative_gtf is not None:
+                if "http" in alternative_gtf or "ftp" in alternative_gtf:
+                    self.gtf_path = self.download_and_ungzip_if_needed(alternative_gtf)
+                else:
+                    self.gtf_path = alternative_gtf
+            else:
+                self.gtf_path = self.genome.annotation_gtf_file
 
     @cached_property
     def genome(self):
@@ -59,7 +104,7 @@ class SpeciesInfo:
         NOTE: if the genome is not downloaded, also starts the download
         :return: Annotation class instance for chained calls
         """
-        return Annotations(self.genome.annotation_gtf_file)
+        return Annotations(self.gtf_path)
 
 species: dict[str, SpeciesInfo] = {
     'Acanthochromis_polyacanthus': SpeciesInfo("Spiny chromis", "ASM210954v1"),
@@ -137,7 +182,7 @@ species: dict[str, SpeciesInfo] = {
     'Coturnix_japonica': SpeciesInfo("Japanese quail", "Coturnix_japonica_2.0"),
     'Cricetulus_griseus_chok1gshd': SpeciesInfo("Chinese hamster CHOK1GS", "CHOK1GS_HDv1"),
     'Cricetulus_griseus_crigri': SpeciesInfo("Chinese hamster CriGri", "CriGri_1.0"),
-    'Cricetulus_griseus_picr': SpeciesInfo("Chinese hamster PICR", "CriGri-PICR"),
+    'Cricetulus_griseus_picr': SpeciesInfo("Chinese hamster PICR", "CriGri-PICRH-1.0"),
     'Crocodylus_porosus': SpeciesInfo("Australian saltwater crocodile", "CroPor_comp1"),
     'Cyanistes_caeruleus': SpeciesInfo("Blue tit", "cyaCae2"),
     'Cyclopterus_lumpus': SpeciesInfo("Lumpfish", "fCycLum1.pri"),
@@ -154,7 +199,7 @@ species: dict[str, SpeciesInfo] = {
     'Dicentrarchus_labrax': SpeciesInfo("European seabass", "dlabrax2021"),
     'Dipodomys_ordii': SpeciesInfo("Kangaroo rat", "Dord_2.0"),
     'Dromaius_novaehollandiae': SpeciesInfo("Emu", "droNov1"),
-    'Drosophila_melanogaster': SpeciesInfo("Drosophila melanogaster", "BDGP6.32"),
+    'Drosophila_melanogaster': SpeciesInfo("Drosophila melanogaster", "BDGP6.46"),
     'Echeneis_naucrates': SpeciesInfo("Live sharksucker", "fEcheNa1.1"),
     'Echinops_telfairi': SpeciesInfo("Lesser hedgehog tenrec", "TENREC"),
     'Electrophorus_electricus': SpeciesInfo("Electric eel", "Ee_SOAP_WITH_SSPACE"),
@@ -182,10 +227,10 @@ species: dict[str, SpeciesInfo] = {
     'Gorilla_gorilla': SpeciesInfo("Gorilla", "gorGor4"),
     'Gouania_willdenowi': SpeciesInfo("Blunt-snouted clingfish", "fGouWil2.1"),
     'Haplochromis_burtoni': SpeciesInfo("Burton's mouthbrooder", "AstBur1.0"),
-    'Heterocephalus_glaber_female': SpeciesInfo("Naked mole-rat female", "HetGla_female_1.0"),
-    'Heterocephalus_glaber_male': SpeciesInfo("Naked mole-rat male", "HetGla_1.0"),
+    'Heterocephalus_glaber_female': SpeciesInfo("Naked mole-rat female", "GCA_944319715.1"),
+    'Heterocephalus_glaber_male': SpeciesInfo("Naked mole-rat male", "GCA_944319725.1"),
     'Hippocampus_comes': SpeciesInfo("Tiger tail seahorse", "H_comes_QL1_v1"),
-    'Homo_sapiens': SpeciesInfo("Human", "GRCh38.p13"),
+    'Homo_sapiens': SpeciesInfo("Human", "GRCh38.p14"),
     'Hucho_hucho': SpeciesInfo("Huchen", "ASM331708v1"),
     'Ictalurus_punctatus': SpeciesInfo("Channel catfish", "IpCoco_1.2"),
     'Ictidomys_tridecemlineatus': SpeciesInfo("Squirrel", "SpeTri2.0"),
@@ -277,7 +322,7 @@ species: dict[str, SpeciesInfo] = {
     'Ovis_aries': SpeciesInfo("Sheep (texel)", "Oar_v3.1"),
     'Ovis_aries_rambouillet': SpeciesInfo("Sheep", "Oar_rambouillet_v1.0"),
     'Pan_paniscus': SpeciesInfo("Bonobo", "panpan1.1"),
-    'Pan_troglodytes': SpeciesInfo("Chimpanzee", "Pan_tro_3.0"),
+    'Pan_troglodytes': SpeciesInfo("Chimpanzee", "Pan_tro_3.0", alternative_gtf="http://ftp.ensembl.org/pub/release-110/gtf/pan_troglodytes/Pan_troglodytes.Pan_tro_3.0.110.chr.gtf.gz"),
     'Panthera_leo': SpeciesInfo("Lion", "PanLeo1.0"),
     'Panthera_pardus': SpeciesInfo("Leopard", "PanPar1.0"),
     'Panthera_tigris_altaica': SpeciesInfo("Tiger", "PanTig1.0"),
@@ -381,8 +426,10 @@ species: dict[str, SpeciesInfo] = {
 
 }
 
-human = species["Homo_sapiens"] # used for faster access to common human genome
-mouse = species["Mus_musculus"] # used for faster access to common mouse genome
+human = species["Homo_sapiens"]  # used for faster access to common human genome
+mouse = species["Mus_musculus"]  # used for faster access to common mouse genome
+gorilla = species["Gorilla_gorilla"]  # used for faster access to common gorilla genome
+chimpanzee = species["Pan_troglodytes"] # used for faster access to common chimpanzee genome
 rat = species["Rattus_norvegicus"] # rats
 cow = species["Bos_taurus"]
 chlamy = species['Chlamydomonas reinhardtii']
