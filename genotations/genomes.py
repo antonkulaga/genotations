@@ -234,6 +234,14 @@ class Annotations:
                  .filter(pl.col("gene").str.contains(gene_id))
         return Annotations(result)
 
+    def by_chomosome(self, chr: str) -> 'Annotations':
+        result = self.annotations_df \
+            .filter(pl.col("seqname").str.contains(chr))
+        return Annotations(result)
+
+    def mitochondrial(self):
+        return self.by_chomosome("MT")
+
     def by_transcript_name(self, transcript_name: str) -> 'Annotations':
         """
         If we know Ensembl transcript ID and want to get only its features

@@ -7,7 +7,7 @@ import gzip
 from typing import Union
 import genomepy
 import loguru
-
+import requests
 from genotations.genomes import Annotations
 
 ens = genomepy.providers.EnsemblProvider() #instance of ensembl provider to be used for further genome and annotations downloads
@@ -32,27 +32,37 @@ class SpeciesInfo:
     species_name: str
     genomes_dir: Optional[str]
     broken: bool = False
-    gtf_path: str
-
-
+    _gtf: Optional[str] = None
 
     @staticmethod
     def download_and_ungzip_if_needed(annotation_gtf_file: str, gtf_path: str) -> Union[str, None]:
         # Convert the string paths to Path objects
         annotation_gtf_path = Path(annotation_gtf_file)
-        gtf_file_path = Path(gtf_path)
-
-        # Get the parent folder from the annotation_gtf_file
         parent_folder = annotation_gtf_path.parent
 
-        # Create the full path where the gtf_path file will be saved
-        destination_path = parent_folder / gtf_file_path.name
+        # Check if gtf_path is a URL
+        if gtf_path.startswith('http://') or gtf_path.startswith('https://'):
+            # Fetch the basename from the URL
+            file_name = gtf_path.split('/')[-1]
+            destination_path = parent_folder / file_name
 
-        # Download the file (simulating the download with a file copy for now)
-        shutil.copy(gtf_file_path, destination_path)
+            # If the file doesn't exist, download it
+            if not destination_path.exists():
+                response = requests.get(gtf_path, stream=True)
+                response.raise_for_status()
+                with open(destination_path, 'wb') as file:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        file.write(chunk)
+        else:
+            gtf_file_path = Path(gtf_path)
+            destination_path = parent_folder / gtf_file_path.name
 
-        # If the file ends with .gz, ungzip it
-        if destination_path.suffix == '.gz':
+            # If the file doesn't exist, copy it
+            if not destination_path.exists():
+                shutil.copy(gtf_file_path, destination_path)
+
+        # If the file ends with .gz but the unzipped version doesn't exist, ungzip it
+        if destination_path.suffix == '.gz' and not destination_path.with_suffix('').exists():
             with gzip.open(destination_path, 'rb') as f_in:
                 with open(destination_path.with_suffix(''), 'wb') as f_out:
                     shutil.copyfileobj(f_in, f_out)
@@ -60,6 +70,21 @@ class SpeciesInfo:
             return str(destination_path.with_suffix(''))
 
         return str(destination_path)
+
+
+
+    @property
+    def gtf_path(self) -> str:
+        """Lazy loading of the GTF path."""
+        if self._gtf is None:
+            # If _gtf is not set, fallback to self.genome.annotation_gtf_file
+            return self.genome.annotation_gtf_file
+        return str(self._gtf)
+
+    @gtf_path.setter
+    def gtf_path(self, value: str):
+        """Setter for gtf_path. This allows you to manually set _gtf if needed."""
+        self._gtf = value
 
 
 
@@ -80,11 +105,9 @@ class SpeciesInfo:
             self.genomes_dir = genomes_dir
             if alternative_gtf is not None:
                 if "http" in alternative_gtf or "ftp" in alternative_gtf:
-                    self.gtf_path = self.download_and_ungzip_if_needed(alternative_gtf)
+                    self._gtf = self.download_and_ungzip_if_needed(self.genome.annotation_gtf_file, alternative_gtf)
                 else:
-                    self.gtf_path = alternative_gtf
-            else:
-                self.gtf_path = self.genome.annotation_gtf_file
+                    self._gtf = alternative_gtf
 
     @cached_property
     def genome(self):
@@ -322,7 +345,7 @@ species: dict[str, SpeciesInfo] = {
     'Ovis_aries': SpeciesInfo("Sheep (texel)", "Oar_v3.1"),
     'Ovis_aries_rambouillet': SpeciesInfo("Sheep", "Oar_rambouillet_v1.0"),
     'Pan_paniscus': SpeciesInfo("Bonobo", "panpan1.1"),
-    'Pan_troglodytes': SpeciesInfo("Chimpanzee", "Pan_tro_3.0", alternative_gtf="http://ftp.ensembl.org/pub/release-110/gtf/pan_troglodytes/Pan_troglodytes.Pan_tro_3.0.110.chr.gtf.gz"),
+    'Pan_troglodytes': SpeciesInfo("Chimpanzee", "Pan_tro_3.0"), #, alternative_gtf="http://ftp.ensembl.org/pub/release-110/gtf/pan_troglodytes/Pan_troglodytes.Pan_tro_3.0.110.chr.gtf.g
     'Panthera_leo': SpeciesInfo("Lion", "PanLeo1.0"),
     'Panthera_pardus': SpeciesInfo("Leopard", "PanPar1.0"),
     'Panthera_tigris_altaica': SpeciesInfo("Tiger", "PanTig1.0"),
